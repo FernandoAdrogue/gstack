@@ -26,6 +26,7 @@ import {
   markHiddenElements, getCleanTextWithStripping, cleanupHiddenMarkers,
 } from './content-security';
 import { generateCanary, injectCanary, getStatus as getSecurityStatus, writeDecision } from './security';
+import { writeSecureFile, mkdirSecure } from './file-permissions';
 import { handleSnapshot, SNAPSHOT_FLAGS } from './snapshot';
 import {
   initRegistry, validateToken as validateScopedToken, checkScope, checkDomain,
@@ -1597,7 +1598,7 @@ async function start() {
           const stateContent = JSON.parse(fs.readFileSync(config.stateFile, 'utf-8'));
           stateContent.tunnel = { url: tunnelUrl, domain: domain || null, startedAt: new Date().toISOString() };
           const tmpState = config.stateFile + '.tmp';
-          fs.writeFileSync(tmpState, JSON.stringify(stateContent, null, 2), { mode: 0o600 });
+          writeSecureFile(tmpState, JSON.stringify(stateContent, null, 2));
           fs.renameSync(tmpState, config.stateFile);
 
           return new Response(JSON.stringify({ url: tunnelUrl }), {
@@ -2127,7 +2128,7 @@ async function start() {
     ...(xvfb ? { xvfbPid: xvfb.pid, xvfbStartTime: xvfb.startTime, xvfbDisplay: xvfb.display } : {}),
   };
   const tmpFile = config.stateFile + '.tmp';
-  fs.writeFileSync(tmpFile, JSON.stringify(state, null, 2), { mode: 0o600 });
+  writeSecureFile(tmpFile, JSON.stringify(state, null, 2));
   fs.renameSync(tmpFile, config.stateFile);
 
   browserManager.serverPort = port;
@@ -2208,7 +2209,7 @@ async function start() {
         const stateContent = JSON.parse(fs.readFileSync(config.stateFile, 'utf-8'));
         stateContent.tunnel = { url: tunnelUrl, domain: domain || null, startedAt: new Date().toISOString() };
         const tmpState = config.stateFile + '.tmp';
-        fs.writeFileSync(tmpState, JSON.stringify(stateContent, null, 2), { mode: 0o600 });
+        writeSecureFile(tmpState, JSON.stringify(stateContent, null, 2));
         fs.renameSync(tmpState, config.stateFile);
       } catch (err: any) {
         console.error(`[browse] Failed to start tunnel: ${err.message}`);
@@ -2238,7 +2239,7 @@ async function start() {
       const stateContent = JSON.parse(fs.readFileSync(config.stateFile, 'utf-8'));
       stateContent.tunnelLocalPort = tunnelPort;
       const tmpState = config.stateFile + '.tmp';
-      fs.writeFileSync(tmpState, JSON.stringify(stateContent, null, 2), { mode: 0o600 });
+      writeSecureFile(tmpState, JSON.stringify(stateContent, null, 2));
       fs.renameSync(tmpState, config.stateFile);
     } catch (err: any) {
       console.error(`[browse] BROWSE_TUNNEL_LOCAL_ONLY=1 listener bind failed: ${err.message}`);
@@ -2252,8 +2253,8 @@ start().catch((err) => {
   // stderr because the server is launched with detached: true, stdio: 'ignore'.
   try {
     const errorLogPath = path.join(config.stateDir, 'browse-startup-error.log');
-    fs.mkdirSync(config.stateDir, { recursive: true, mode: 0o700 });
-    fs.writeFileSync(errorLogPath, `${new Date().toISOString()} ${err.message}\n${err.stack || ''}\n`, { mode: 0o600 });
+    mkdirSecure(config.stateDir);
+    writeSecureFile(errorLogPath, `${new Date().toISOString()} ${err.message}\n${err.stack || ''}\n`);
   } catch {
     // stateDir may not exist — nothing more we can do
   }

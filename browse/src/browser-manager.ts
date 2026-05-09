@@ -49,6 +49,11 @@ export interface BrowserState {
 export class BrowserManager {
   private browser: Browser | null = null;
   private context: BrowserContext | null = null;
+  // Proxy config applied to chromium.launch() when set (D8). Set by server.ts
+  // at startup based on BROWSE_PROXY_URL. For SOCKS5 with auth, server.ts
+  // points this at the local bridge (socks5://127.0.0.1:<bridgePort>); for
+  // HTTP/HTTPS or unauth SOCKS5, it's the upstream URL directly.
+  private proxyConfig: { server: string; username?: string; password?: string } | null = null;
   private pages: Map<number, Page> = new Map();
   private tabSessions: Map<number, TabSession> = new Map();
   private activeTabId: number = 0;
@@ -164,6 +169,15 @@ export class BrowserManager {
   }
 
   /**
+   * Set the proxy config applied to chromium.launch() in launch() and
+   * launchHeaded(). Called by server.ts at startup once the (optional) SOCKS5
+   * bridge is up.
+   */
+  setProxyConfig(cfg: { server: string; username?: string; password?: string } | null): void {
+    this.proxyConfig = cfg;
+  }
+
+  /**
    * Get the ref map for external consumers (e.g., /refs endpoint).
    */
   getRefMap(): Array<{ ref: string; role: string; name: string }> {
@@ -179,7 +193,8 @@ export class BrowserManager {
     // BROWSE_EXTENSIONS_DIR points to an unpacked Chrome extension directory.
     // Extensions only work in headed mode, so we use an off-screen window.
     const extensionsDir = process.env.BROWSE_EXTENSIONS_DIR;
-    const launchArgs: string[] = [];
+    const { STEALTH_LAUNCH_ARGS } = await import('./stealth');
+    const launchArgs: string[] = [...STEALTH_LAUNCH_ARGS];
     let useHeadless = true;
 
     // Docker/CI: Chromium sandbox requires unprivileged user namespaces which
@@ -207,6 +222,7 @@ export class BrowserManager {
       // browsing user-specified URLs has marginal sandbox benefit.
       chromiumSandbox: process.platform !== 'win32',
       ...(launchArgs.length > 0 ? { args: launchArgs } : {}),
+      ...(this.proxyConfig ? { proxy: this.proxyConfig } : {}),
     });
 
     // Chromium crash → exit with clear message
@@ -228,6 +244,13 @@ export class BrowserManager {
     if (Object.keys(this.extraHeaders).length > 0) {
       await this.context.setExtraHTTPHeaders(this.extraHeaders);
     }
+
+    // D7: mask navigator.webdriver only. The other 3 wintermute patches
+    // (plugins, languages, chrome.runtime) are intentionally NOT applied —
+    // faking them to fixed values can flag more bot-like to modern
+    // fingerprinters, not less.
+    const { applyStealth } = await import('./stealth');
+    await applyStealth(this.context);
 
     // Create first tab
     await this.newTab();
@@ -359,6 +382,7 @@ export class BrowserManager {
       viewport: null,  // Use browser's default viewport (real window size)
       userAgent: this.customUserAgent || customUA,
       ...(executablePath ? { executablePath } : {}),
+      ...(this.proxyConfig ? { proxy: this.proxyConfig } : {}),
       // Playwright adds flags that block extension loading
       ignoreDefaultArgs: [
         '--disable-extensions',
@@ -369,33 +393,20 @@ export class BrowserManager {
     this.connectionMode = 'headed';
     this.intentionalDisconnect = false;
 
-    // ─── Anti-bot-detection stealth patches ───────────────────────
-    // Playwright's Chromium is detected by sites like Google/NYTimes via:
-    //   1. navigator.webdriver = true (handled by --disable-blink-features above)
-    //   2. Missing plugins array (real Chrome has PDF viewer, etc.)
-    //   3. Missing languages
-    //   4. CDP runtime detection (window.cdc_* variables)
-    //   5. Permissions API returning 'denied' for notifications
+    // ─── Anti-bot-detection patches ───────────────────────────────
+    // D7 (codex correction): mask navigator.webdriver only. We do NOT fake
+    // plugins/languages — modern fingerprinters check consistency between
+    // those and userAgent/platform, and synthesizing fixed values can flag
+    // MORE bot-like, not less. Let Chromium's natural plugins and languages
+    // surface unmodified.
+    //
+    // What we DO clean up are automation-specific runtime artifacts that
+    // shouldn't exist in a real browser at all (Permissions API quirks,
+    // ChromeDriver-injected window globals). Those aren't fingerprint
+    // synthesis — they're removing leaked automation tells.
+    const { applyStealth } = await import('./stealth');
+    await applyStealth(this.context);
     await this.context.addInitScript(() => {
-      // Fake plugins array (real Chrome has at least PDF Viewer)
-      Object.defineProperty(navigator, 'plugins', {
-        get: () => {
-          const plugins = [
-            { name: 'PDF Viewer', filename: 'internal-pdf-viewer', description: 'Portable Document Format' },
-            { name: 'Chrome PDF Viewer', filename: 'internal-pdf-viewer', description: '' },
-            { name: 'Chromium PDF Viewer', filename: 'internal-pdf-viewer', description: '' },
-          ];
-          (plugins as any).namedItem = (name: string) => plugins.find(p => p.name === name) || null;
-          (plugins as any).refresh = () => {};
-          return plugins;
-        },
-      });
-
-      // Fake languages (Playwright sometimes sends empty)
-      Object.defineProperty(navigator, 'languages', {
-        get: () => ['en-US', 'en'],
-      });
-
       // Remove CDP runtime artifacts that automation detectors look for
       // cdc_ prefixed vars are injected by ChromeDriver/CDP
       const cleanup = () => {
@@ -694,14 +705,32 @@ export class BrowserManager {
 
   /**
    * Check if a client can access a tab.
-   * If ownOnly or isWrite is true, requires ownership.
-   * Otherwise (reads), allow by default.
+   *
+   * Two policies, distinguished by `options.ownOnly`:
+   *
+   *   - **own-only (pair-agent over tunnel):** the strict mode. Token must own
+   *     the target tab for any access (reads or writes). Unowned user tabs
+   *     and tabs owned by other clients are off-limits. Remote agents must
+   *     `newtab` first to get a tab they can drive.
+   *
+   *   - **shared (local skill spawns, default scoped tokens):** permissive on
+   *     tab access. The token can read/write any tab — capability is gated
+   *     elsewhere (scope checks at /command, rate limits, the dual-listener
+   *     allowlist for tunnel-bound traffic). Tab ownership is not a security
+   *     boundary for shared tokens; it only matters for pair-agent isolation.
+   *     This matches the contract documented in `skill-token.ts:79`
+   *     ("skill scripts may switch tabs as needed").
+   *
+   * Root is unconstrained.
+   *
+   * `isWrite` is preserved in the signature for callers that want to log or
+   * branch on it elsewhere, but the access decision itself only depends on
+   * `ownOnly` + ownership map state.
    */
   checkTabAccess(tabId: number, clientId: string, options: { isWrite?: boolean; ownOnly?: boolean } = {}): boolean {
     if (clientId === 'root') return true;
-    const owner = this.tabOwnership.get(tabId);
-    if (options.ownOnly || options.isWrite) {
-      if (!owner) return false;
+    if (options.ownOnly) {
+      const owner = this.tabOwnership.get(tabId);
       return owner === clientId;
     }
     return true;
@@ -739,6 +768,80 @@ export class BrowserManager {
     const session = this.tabSessions.get(tabId);
     if (!session) throw new Error(`Tab ${tabId} not found`);
     return session;
+  }
+
+  /** Get the underlying Page for a tab id. Returns null if the tab doesn't exist.
+   *  Used by the CDP bridge (cdp-bridge.ts) to mint per-tab CDPSessions. */
+  getPageForTab(tabId: number): Page | null {
+    return this.pages.get(tabId) ?? null;
+  }
+
+  // ─── Two-tier mutex (Codex T7) ─────────────────────────────
+  // Per-tab and global locks for the CDP bridge. tab-scoped methods take the
+  // per-tab mutex; browser-scoped methods take the global lock that blocks all
+  // tab mutexes. Hard timeout on acquire so silent deadlock can't happen.
+  // Every caller MUST use try { ... } finally { release() }.
+
+  private tabLocks: Map<number, Promise<void>> = new Map();
+  private globalCdpLockTail: Promise<void> = Promise.resolve();
+
+  /**
+   * Acquire the per-tab CDP lock with a timeout. Returns a release fn.
+   * Locks chain: each acquire waits on the prior tail's resolution.
+   * Browser-scoped global lock takes precedence: while the global lock is
+   * held, no tab lock can be acquired (and vice versa).
+   */
+  async acquireTabLock(tabId: number, timeoutMs: number): Promise<() => void> {
+    const existing = this.tabLocks.get(tabId) ?? Promise.resolve();
+    // Wait for any held global lock first (cross-tier serialization).
+    const tail = Promise.all([existing, this.globalCdpLockTail]).then(() => undefined);
+    let release!: () => void;
+    const next = new Promise<void>((resolve) => { release = resolve; });
+    this.tabLocks.set(tabId, tail.then(() => next));
+
+    const timeoutPromise = new Promise<never>((_, reject) =>
+      setTimeout(() => reject(new Error(
+        `CDPMutexAcquireTimeout: tab ${tabId} lock not acquired within ${timeoutMs}ms.\n` +
+        'Cause: a prior CDP or browser-scoped operation has held the lock too long.\n' +
+        'Action: retry; if this repeats, the prior operation may be hung — file a bug.'
+      )), timeoutMs),
+    );
+    try {
+      await Promise.race([tail, timeoutPromise]);
+    } catch (e) {
+      // Acquisition failed; release the slot we reserved so we don't deadlock the queue.
+      release();
+      throw e;
+    }
+    return release;
+  }
+
+  /**
+   * Acquire the global CDP lock. Blocks until all tab locks are released, and
+   * blocks new tab-lock acquisitions until released.
+   */
+  async acquireGlobalCdpLock(timeoutMs: number): Promise<() => void> {
+    const allTabTails = Array.from(this.tabLocks.values());
+    const priorGlobal = this.globalCdpLockTail;
+    const allPrior = Promise.all([priorGlobal, ...allTabTails]).then(() => undefined);
+    let release!: () => void;
+    const next = new Promise<void>((resolve) => { release = resolve; });
+    this.globalCdpLockTail = allPrior.then(() => next);
+
+    const timeoutPromise = new Promise<never>((_, reject) =>
+      setTimeout(() => reject(new Error(
+        `CDPMutexAcquireTimeout: global CDP lock not acquired within ${timeoutMs}ms.\n` +
+        'Cause: in-flight tab operations have not completed.\n' +
+        'Action: retry; if this repeats, file a bug — a tab op may be hung.'
+      )), timeoutMs),
+    );
+    try {
+      await Promise.race([allPrior, timeoutPromise]);
+    } catch (e) {
+      release();
+      throw e;
+    }
+    return release;
   }
 
   // ─── Page Access (delegates to active session) ─────────────
@@ -1165,6 +1268,7 @@ export class BrowserManager {
         headless: false,
         args: launchArgs,
         viewport: null,
+        ...(this.proxyConfig ? { proxy: this.proxyConfig } : {}),
         ignoreDefaultArgs: [
           '--disable-extensions',
           '--disable-component-extensions-with-background-pages',

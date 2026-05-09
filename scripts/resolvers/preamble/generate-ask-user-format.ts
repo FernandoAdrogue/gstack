@@ -3,11 +3,17 @@ import type { TemplateContext } from '../types';
 export function generateAskUserFormat(_ctx: TemplateContext): string {
   return `## AskUserQuestion Format
 
-Every AskUserQuestion decision has two parts:
-1. The decision brief, emitted as plain markdown immediately before the tool call.
-2. The compact tool_use payload that lets the user choose.
+### Tool resolution (read first)
 
-Do not pack the full brief into the tool's \`question\` string. The VSCode panel is narrow; long bodies and many tabs make the choices unreadable.
+"AskUserQuestion" may be host MCP (e.g. \`mcp__conductor__AskUserQuestion\`) or native Claude Code.
+
+**Rule:** if any \`mcp__*__AskUserQuestion\` variant is in your tool list, prefer it. Hosts may disable native AUQ and route through MCP; same questions/options shape, same decision brief.
+
+**Fallback when neither variant is callable:** plan mode writes the brief into the plan file as \`## Decisions to confirm\` + ExitPlanMode; outside plan mode, output the brief and stop. **Never silently auto-decide** — only \`/plan-tune\` AUTO_DECIDE opt-ins authorize auto-picking.
+
+### Format
+
+Every AskUserQuestion decision has two parts: a markdown decision brief before the call, then a compact tool_use payload. Do not pack the full brief into the tool's \`question\` string. Every AskUserQuestion must be sent as tool_use, not prose.
 
 \`\`\`
 D<N> — <one-line question title>
@@ -50,9 +56,9 @@ Tool payload rules:
 
 Before calling AskUserQuestion, verify:
 - [ ] D<N> header present
-- [ ] ELI10 paragraph present (stakes line too)
-- [ ] Recommendation line present with concrete reason
-- [ ] Completeness scored (coverage) OR kind-note present (kind)
+- [ ] ELI10 paragraph and stakes line present
+- [ ] Recommendation line present with reason
+- [ ] Completeness scored OR kind-note present
 - [ ] Every option has ≥2 ✅ and ≥1 ❌, each ≥40 chars (or hard-stop escape)
 - [ ] (recommended) label on one option (even for neutral-posture)
 - [ ] Dual-scale effort labels on effort-bearing options (human / CC)

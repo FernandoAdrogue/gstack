@@ -102,7 +102,7 @@ In plan mode, allowed because they inform the plan: `$B`, `$D`, `codex exec`/`co
 
 ## Skill Invocation During Plan Mode
 
-If the user invokes a skill in plan mode, the skill takes precedence over generic plan mode behavior. **Treat the skill file as executable instructions, not reference.** Follow it step by step starting from Step 0; the first AskUserQuestion is the workflow entering plan mode, not a violation of it. AskUserQuestion satisfies plan mode's end-of-turn requirement. At a STOP point, stop immediately. Do not continue the workflow or call ExitPlanMode there. Commands marked "PLAN MODE EXCEPTION — ALWAYS RUN" execute. Call ExitPlanMode only after the skill workflow completes, or if the user tells you to cancel the skill or leave plan mode.
+If the user invokes a skill in plan mode, the skill takes precedence over generic plan mode behavior. **Treat the skill file as executable instructions, not reference.** Follow it step by step starting from Step 0; the first AskUserQuestion is the workflow entering plan mode, not a violation of it. AskUserQuestion (any variant — `mcp__*__AskUserQuestion` or native; see "AskUserQuestion Format → Tool resolution") satisfies plan mode's end-of-turn requirement. If no variant is callable, fall back to writing the decision brief into the plan file as a `## Decisions to confirm` section + ExitPlanMode — never silently auto-decide. At a STOP point, stop immediately. Do not continue the workflow or call ExitPlanMode there. Commands marked "PLAN MODE EXCEPTION — ALWAYS RUN" execute. Call ExitPlanMode only after the skill workflow completes, or if the user tells you to cancel the skill or leave plan mode.
 
 If `PROACTIVE` is `"false"`, do not auto-invoke or proactively suggest skills. If a skill seems useful, ask: "I think /skillname might help here — want me to run it?"
 
@@ -267,11 +267,17 @@ AI orchestrator (e.g., OpenClaw). In spawned sessions:
 
 ## AskUserQuestion Format
 
-Every AskUserQuestion decision has two parts:
-1. The decision brief, emitted as plain markdown immediately before the tool call.
-2. The compact tool_use payload that lets the user choose.
+### Tool resolution (read first)
 
-Do not pack the full brief into the tool's `question` string. The VSCode panel is narrow; long bodies and many tabs make the choices unreadable.
+"AskUserQuestion" may be host MCP (e.g. `mcp__conductor__AskUserQuestion`) or native Claude Code.
+
+**Rule:** if any `mcp__*__AskUserQuestion` variant is in your tool list, prefer it. Hosts may disable native AUQ and route through MCP; same questions/options shape, same decision brief.
+
+**Fallback when neither variant is callable:** plan mode writes the brief into the plan file as `## Decisions to confirm` + ExitPlanMode; outside plan mode, output the brief and stop. **Never silently auto-decide** — only `/plan-tune` AUTO_DECIDE opt-ins authorize auto-picking.
+
+### Format
+
+Every AskUserQuestion decision has two parts: a markdown decision brief before the call, then a compact tool_use payload. Do not pack the full brief into the tool's `question` string. Every AskUserQuestion must be sent as tool_use, not prose.
 
 ```
 D<N> — <one-line question title>
@@ -314,9 +320,9 @@ Tool payload rules:
 
 Before calling AskUserQuestion, verify:
 - [ ] D<N> header present
-- [ ] ELI10 paragraph present (stakes line too)
-- [ ] Recommendation line present with concrete reason
-- [ ] Completeness scored (coverage) OR kind-note present (kind)
+- [ ] ELI10 paragraph and stakes line present
+- [ ] Recommendation line present with reason
+- [ ] Completeness scored OR kind-note present
 - [ ] Every option has ≥2 ✅ and ≥1 ❌, each ≥40 chars (or hard-stop escape)
 - [ ] (recommended) label on one option (even for neutral-posture)
 - [ ] Dual-scale effort labels on effort-bearing options (human / CC)
@@ -327,21 +333,68 @@ Before calling AskUserQuestion, verify:
 - [ ] You wrote the brief, then called the tool_use payload
 
 
-## GBrain Sync (skill start)
+## Artifacts Sync (skill start)
 
 ```bash
 _GSTACK_HOME="${GSTACK_HOME:-$HOME/.gstack}"
-_BRAIN_REMOTE_FILE="$HOME/.gstack-brain-remote.txt"
+# Prefer the v1.27.0.0 artifacts file; fall back to brain file for users
+# upgrading mid-stream before the migration script runs.
+if [ -f "$HOME/.gstack-artifacts-remote.txt" ]; then
+  _BRAIN_REMOTE_FILE="$HOME/.gstack-artifacts-remote.txt"
+else
+  _BRAIN_REMOTE_FILE="$HOME/.gstack-brain-remote.txt"
+fi
 _BRAIN_SYNC_BIN="$GSTACK_BIN/gstack-brain-sync"
 _BRAIN_CONFIG_BIN="$GSTACK_BIN/gstack-config"
 
-_BRAIN_SYNC_MODE=$("$_BRAIN_CONFIG_BIN" get gbrain_sync_mode 2>/dev/null || echo off)
+# /sync-gbrain context-load: teach the agent to use gbrain when it's available.
+# Per-worktree pin: post-spike redesign uses kubectl-style `.gbrain-source` in the
+# git toplevel to scope queries. Look for the pin in the worktree (not a global
+# state file) so that opening worktree B without a pin doesn't claim "indexed"
+# just because worktree A was synced. Empty string when gbrain is not
+# configured (zero context cost for non-gbrain users).
+_GBRAIN_CONFIG="$HOME/.gbrain/config.json"
+if [ -f "$_GBRAIN_CONFIG" ] && command -v gbrain >/dev/null 2>&1; then
+  _GBRAIN_VERSION_OK=$(gbrain --version 2>/dev/null | grep -c '^gbrain ' || echo 0)
+  if [ "$_GBRAIN_VERSION_OK" -gt 0 ] 2>/dev/null; then
+    _GBRAIN_PIN_PATH=""
+    _REPO_TOP=$(git rev-parse --show-toplevel 2>/dev/null || echo "")
+    if [ -n "$_REPO_TOP" ] && [ -f "$_REPO_TOP/.gbrain-source" ]; then
+      _GBRAIN_PIN_PATH="$_REPO_TOP/.gbrain-source"
+    fi
+    if [ -n "$_GBRAIN_PIN_PATH" ]; then
+      echo "GBrain configured. Prefer \`gbrain search\`/\`gbrain query\` over Grep for"
+      echo "semantic questions; use \`gbrain code-def\`/\`code-refs\`/\`code-callers\` for"
+      echo "symbol-aware code lookup. See \"## GBrain Search Guidance\" in CLAUDE.md."
+      echo "Run /sync-gbrain to refresh."
+    else
+      echo "GBrain configured but this worktree isn't pinned yet. Run \`/sync-gbrain --full\`"
+      echo "before relying on \`gbrain search\` for code questions in this worktree."
+      echo "Falls back to Grep until pinned."
+    fi
+  fi
+fi
+
+_BRAIN_SYNC_MODE=$("$_BRAIN_CONFIG_BIN" get artifacts_sync_mode 2>/dev/null || echo off)
+
+# Detect remote-MCP mode (Path 4 of /setup-gbrain). Local artifacts sync is
+# a no-op in remote mode; the brain server pulls from GitHub/GitLab on its
+# own cadence. Read claude.json directly to keep this preamble fast (no
+# subprocess to claude CLI on every skill start).
+_GBRAIN_MCP_MODE="none"
+if command -v jq >/dev/null 2>&1 && [ -f "$HOME/.claude.json" ]; then
+  _GBRAIN_MCP_TYPE=$(jq -r '.mcpServers.gbrain.type // .mcpServers.gbrain.transport // empty' "$HOME/.claude.json" 2>/dev/null)
+  case "$_GBRAIN_MCP_TYPE" in
+    url|http|sse) _GBRAIN_MCP_MODE="remote-http" ;;
+    stdio) _GBRAIN_MCP_MODE="local-stdio" ;;
+  esac
+fi
 
 if [ -f "$_BRAIN_REMOTE_FILE" ] && [ ! -d "$_GSTACK_HOME/.git" ] && [ "$_BRAIN_SYNC_MODE" = "off" ]; then
   _BRAIN_NEW_URL=$(head -1 "$_BRAIN_REMOTE_FILE" 2>/dev/null | tr -d '[:space:]')
   if [ -n "$_BRAIN_NEW_URL" ]; then
-    echo "BRAIN_SYNC: brain repo detected: $_BRAIN_NEW_URL"
-    echo "BRAIN_SYNC: run 'gstack-brain-restore' to pull your cross-machine memory (or 'gstack-config set gbrain_sync_mode off' to dismiss forever)"
+    echo "ARTIFACTS_SYNC: artifacts repo detected: $_BRAIN_NEW_URL"
+    echo "ARTIFACTS_SYNC: run 'gstack-brain-restore' to pull your cross-machine artifacts (or 'gstack-config set artifacts_sync_mode off' to dismiss forever)"
   fi
 fi
 
@@ -361,22 +414,27 @@ if [ -d "$_GSTACK_HOME/.git" ] && [ "$_BRAIN_SYNC_MODE" != "off" ]; then
   "$_BRAIN_SYNC_BIN" --once 2>/dev/null || true
 fi
 
-if [ -d "$_GSTACK_HOME/.git" ] && [ "$_BRAIN_SYNC_MODE" != "off" ]; then
+if [ "$_GBRAIN_MCP_MODE" = "remote-http" ]; then
+  # Remote-MCP mode: local artifacts sync is a no-op (brain admin's server
+  # pulls from GitHub/GitLab). Show the user this is by design, not broken.
+  _GBRAIN_HOST=$(jq -r '.mcpServers.gbrain.url // empty' "$HOME/.claude.json" 2>/dev/null | sed -E 's|^https?://([^/:]+).*|\1|')
+  echo "ARTIFACTS_SYNC: remote-mode (managed by brain server ${_GBRAIN_HOST:-remote})"
+elif [ -d "$_GSTACK_HOME/.git" ] && [ "$_BRAIN_SYNC_MODE" != "off" ]; then
   _BRAIN_QUEUE_DEPTH=0
   [ -f "$_GSTACK_HOME/.brain-queue.jsonl" ] && _BRAIN_QUEUE_DEPTH=$(wc -l < "$_GSTACK_HOME/.brain-queue.jsonl" | tr -d ' ')
   _BRAIN_LAST_PUSH="never"
   [ -f "$_GSTACK_HOME/.brain-last-push" ] && _BRAIN_LAST_PUSH=$(cat "$_GSTACK_HOME/.brain-last-push" 2>/dev/null || echo never)
-  echo "BRAIN_SYNC: mode=$_BRAIN_SYNC_MODE | last_push=$_BRAIN_LAST_PUSH | queue=$_BRAIN_QUEUE_DEPTH"
+  echo "ARTIFACTS_SYNC: mode=$_BRAIN_SYNC_MODE | last_push=$_BRAIN_LAST_PUSH | queue=$_BRAIN_QUEUE_DEPTH"
 else
-  echo "BRAIN_SYNC: off"
+  echo "ARTIFACTS_SYNC: off"
 fi
 ```
 
 
 
-Privacy stop-gate: if output shows `BRAIN_SYNC: off`, `gbrain_sync_mode_prompted` is `false`, and gbrain is on PATH or `gbrain doctor --fast --json` works, ask once:
+Privacy stop-gate: if output shows `ARTIFACTS_SYNC: off`, `artifacts_sync_mode_prompted` is `false`, and gbrain is on PATH or `gbrain doctor --fast --json` works, ask once:
 
-> gstack can publish your session memory to a private GitHub repo that GBrain indexes across machines. How much should sync?
+> gstack can publish your artifacts (CEO plans, designs, reports) to a private GitHub repo that GBrain indexes across machines. How much should sync?
 
 Options:
 - A) Everything allowlisted (recommended)
@@ -387,11 +445,11 @@ After answer:
 
 ```bash
 # Chosen mode: full | artifacts-only | off
-"$_BRAIN_CONFIG_BIN" set gbrain_sync_mode <choice>
-"$_BRAIN_CONFIG_BIN" set gbrain_sync_mode_prompted true
+"$_BRAIN_CONFIG_BIN" set artifacts_sync_mode <choice>
+"$_BRAIN_CONFIG_BIN" set artifacts_sync_mode_prompted true
 ```
 
-If A/B and `~/.gstack/.git` is missing, ask whether to run `gstack-brain-init`. Do not block the skill.
+If A/B and `~/.gstack/.git` is missing, ask whether to run `gstack-artifacts-init`. Do not block the skill.
 
 At skill END before telemetry:
 
@@ -2388,7 +2446,14 @@ glab mr view -F json 2>/dev/null | jq -r 'if .state == "opened" then "MR_EXISTS"
 
 If an **open** PR/MR already exists: **update** the PR body using `gh pr edit --body "..."` (GitHub) or `glab mr update -d "..."` (GitLab). Always regenerate the PR body from scratch using this run's fresh results (test output, coverage audit, review findings, adversarial review, TODOS summary, documentation_section from Step 18). Never reuse stale PR body content from a prior run.
 
-**Also update the PR title** if the version changed on rerun. PR titles use the workspace-aware format `v<NEW_VERSION> <type>: <summary>` — version ALWAYS first. If the current title's version prefix doesn't match `NEW_VERSION`, run `gh pr edit --title "v$NEW_VERSION <type>: <summary>"` (or the `glab mr update -t ...` equivalent). This keeps the title truthful when Step 12's queue-drift detection rebumps a stale version. If the title has no `v<X.Y.Z.W>` prefix (a custom title kept intentionally), leave the title alone — only rewrite titles that already follow the format.
+**Always update the PR title to start with `v$NEW_VERSION`.** PR titles use the workspace-aware format `v<NEW_VERSION> <type>: <summary>` — version ALWAYS first, no exceptions, no "custom title kept intentionally" escape hatch. The shared helper `bin/gstack-pr-title-rewrite.sh` is the single source of truth for the rule.
+
+1. Read the current title: `CURRENT=$(gh pr view --json title -q .title)` (or `glab mr view -F json | jq -r .title`).
+2. Compute the corrected title: `NEW_TITLE=$($GSTACK_ROOT/bin/gstack-pr-title-rewrite.sh "$NEW_VERSION" "$CURRENT")`. The helper handles three cases: title already correct (no-op), title has a different `v<X.Y.Z.W>` prefix (replace it), or title has no version prefix (prepend one).
+3. If `NEW_TITLE` differs from `CURRENT`, run `gh pr edit --title "$NEW_TITLE"` (or `glab mr update -t "$NEW_TITLE"`).
+4. **Self-check:** re-fetch the title and assert it starts with `v$NEW_VERSION `. If it does not, retry the edit once. If still wrong, surface the failure to the user.
+
+This keeps the title truthful when Step 12's queue-drift detection rebumps a stale version, and forces the format on PRs that were created without it.
 
 Print the existing URL and continue to Step 20.
 
@@ -2458,6 +2523,8 @@ you missed it.>
 **If GitHub:**
 
 ```bash
+# PR title MUST start with v$NEW_VERSION — enforced on every run, no exceptions.
+# (See Step 19 idempotency block + bin/gstack-pr-title-rewrite.sh for the rule.)
 gh pr create --base <base> --title "v$NEW_VERSION <type>: <summary>" --body "$(cat <<'EOF'
 <PR body from above>
 EOF
@@ -2467,6 +2534,8 @@ EOF
 **If GitLab:**
 
 ```bash
+# MR title MUST start with v$NEW_VERSION — enforced on every run, no exceptions.
+# (See Step 19 idempotency block + bin/gstack-pr-title-rewrite.sh for the rule.)
 glab mr create -b <base> -t "v$NEW_VERSION <type>: <summary>" -d "$(cat <<'EOF'
 <MR body from above>
 EOF

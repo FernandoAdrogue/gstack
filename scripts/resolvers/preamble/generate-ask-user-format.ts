@@ -5,11 +5,11 @@ export function generateAskUserFormat(_ctx: TemplateContext): string {
 
 ### Tool resolution (read first)
 
-"AskUserQuestion" may be host MCP (e.g. \`mcp__conductor__AskUserQuestion\`) or native Claude Code.
+"AskUserQuestion" may be host MCP (e.g. \`mcp__conductor__AskUserQuestion\`) or native.
 
-**Rule:** if any \`mcp__*__AskUserQuestion\` variant is in your tool list, prefer it. Hosts may disable native AUQ and route through MCP; same questions/options shape, same decision brief.
+**Rule:** if any \`mcp__*__AskUserQuestion\` variant is in your tool list, prefer it. Hosts may disable native AUQ and route through MCP; same shape and brief.
 
-**Fallback when neither variant is callable:** plan mode writes the brief into the plan file as \`## Decisions to confirm\` + ExitPlanMode; outside plan mode, output the brief and stop. **Never silently auto-decide** — only \`/plan-tune\` AUTO_DECIDE opt-ins authorize auto-picking.
+**If no AskUserQuestion variant appears in your tool list, this skill is BLOCKED.** Stop, report \`BLOCKED — AskUserQuestion unavailable\`, and wait for the user. Do not write decisions to the plan file as a substitute, do not emit them as prose and stop, and do not silently auto-decide (only \`/plan-tune\` AUTO_DECIDE opt-ins authorize auto-picking).
 
 ### Format
 

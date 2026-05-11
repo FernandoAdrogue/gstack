@@ -417,6 +417,48 @@ describe("gstack-memory-ingest writer (gbrain v0.27+ `put` interface)", () => {
     rmSync(home, { recursive: true, force: true });
   });
 
+  // Postgres rejects 0x00 in UTF-8 text columns. Some Claude Code transcripts
+  // contain NUL inside user-pasted content or tool output. The writer strips
+  // them at submit time so the brain doesn't return `invalid byte sequence`.
+  it("strips NUL bytes from the body before piping to `gbrain put`", () => {
+    const home = makeTestHome();
+    const gstackHome = join(home, ".gstack");
+    mkdirSync(gstackHome, { recursive: true });
+    const { binDir, stdinFile } = installFakeGbrain(home);
+
+    // Pasted content with embedded NUL bytes in a few shapes:
+    //  - inline mid-token: abc\x00def
+    //  - at start of a line
+    //  - at end of a line
+    //  - back-to-back run
+    const dirty =
+      `abc\x00def hello\x00\x00world\nleading\x00line\nline-trailing\x00\nclean line\n`;
+    const session =
+      `{"type":"user","message":{"role":"user","content":${JSON.stringify(dirty)}},"timestamp":"2026-05-01T00:00:00Z","cwd":"/tmp/nul-test"}\n` +
+      `{"type":"assistant","message":{"role":"assistant","content":"ok"},"timestamp":"2026-05-01T00:00:01Z"}\n`;
+    writeClaudeCodeSession(home, "tmp-nul-test", "nul123", session);
+
+    const r = runScript(["--bulk", "--include-unattributed", "--quiet"], {
+      HOME: home,
+      GSTACK_HOME: gstackHome,
+      PATH: `${binDir}:${process.env.PATH || ""}`,
+    });
+
+    expect(r.exitCode).toBe(0);
+    const stdin = readFileSync(stdinFile, "utf-8");
+    // The body that hit gbrain MUST NOT contain any 0x00 byte. Even one would
+    // make Postgres reject the insert with `invalid byte sequence`.
+    expect(stdin.includes("\x00")).toBe(false);
+    // But the surrounding content should survive intact — we strip NUL only.
+    expect(stdin).toContain("abcdef");
+    expect(stdin).toContain("helloworld");
+    expect(stdin).toContain("leadingline");
+    expect(stdin).toContain("line-trailing");
+    expect(stdin).toContain("clean line");
+
+    rmSync(home, { recursive: true, force: true });
+  });
+
   it("fails fast when gbrain CLI is missing the `put` subcommand", () => {
     const home = makeTestHome();
     const gstackHome = join(home, ".gstack");

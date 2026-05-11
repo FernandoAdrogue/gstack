@@ -329,10 +329,13 @@ describe('gen-skill-docs', () => {
     // added (per /sync-gbrain plan §4). Ratcheted 35000 → 36500 in v1.27.0.0
     // when generate-brain-sync-block.ts gained the gbrain_mcp_mode probe +
     // remote-mode ARTIFACTS_SYNC status line (Path 4 of /setup-gbrain).
+    // Ratcheted 36500 → 39000 in the contributor wave when #1205 added the
+    // \\u-escape CJK rule (rule 12 + self-check item) to the AskUserQuestion
+    // preamble.
     for (const skill of reviewSkills) {
       const content = fs.readFileSync(skill.path, 'utf-8');
       const preamble = extractPreambleBeforeWorkflow(content, skill.markers);
-      expect(Buffer.byteLength(preamble, 'utf-8')).toBeLessThan(36_500);
+      expect(Buffer.byteLength(preamble, 'utf-8')).toBeLessThan(39_000);
     }
   });
 
@@ -1104,6 +1107,26 @@ describe('Plan status footer in preamble', () => {
     expect(content).toContain('gstack-review-read');
     expect(content).toContain('ExitPlanMode');
     expect(content).toContain('NO REVIEWS YET');
+  });
+});
+
+// --- make-pdf setup ordering ---
+
+describe('make-pdf setup ordering', () => {
+  test('MAKE-PDF SETUP appears before generic preamble footer sections', () => {
+    const content = fs.readFileSync(path.join(ROOT, 'make-pdf', 'SKILL.md'), 'utf-8');
+    const preambleIdx = content.indexOf('## Preamble (run first)');
+    const setupIdx = content.indexOf('## MAKE-PDF SETUP');
+    const planModeIdx = content.indexOf('## Plan Mode Safe Operations');
+    const telemetryIdx = content.indexOf('## Telemetry (run last)');
+    const workflowIdx = content.indexOf('# make-pdf: publication-quality PDFs from markdown');
+
+    expect(preambleIdx).toBeGreaterThanOrEqual(0);
+    expect(setupIdx).toBeGreaterThan(preambleIdx);
+    expect(setupIdx).toBeLessThan(planModeIdx);
+    expect(setupIdx).toBeLessThan(telemetryIdx);
+    expect(setupIdx).toBeLessThan(workflowIdx);
+    expect(content.match(/^## MAKE-PDF SETUP/gm)?.length ?? 0).toBe(1);
   });
 });
 

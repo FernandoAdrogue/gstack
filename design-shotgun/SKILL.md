@@ -344,6 +344,26 @@ Tool payload rules:
 - Ask one decision per tool call when possible; batch at most two related questions/tabs. Sequence independent decisions instead of sending 3+ tabs.
 - Do not duplicate the same trade-off text in both `question` and `options[].description`. Prefer putting option-specific trade-offs in `options[].description`.
 
+12. **Non-ASCII characters — write directly, never \u-escape.** When any
+    string field (question, option label, option description) contains
+    Chinese (繁體/簡體), Japanese, Korean, or other non-ASCII text, emit
+    the literal UTF-8 characters in the JSON string. **Never escape them
+    as `\uXXXX`.** Claude Code's tool parameter pipe is UTF-8 native
+    and passes characters through unchanged. Manually escaping requires
+    recalling each codepoint from training, which is unreliable for long
+    CJK strings — the model regularly emits the wrong codepoint (e.g.
+    writes `\u3103` thinking it is 管 U+7BA1, but `\u3103` is
+    actually ㄃, so the user sees `管理工具` rendered as `㄃3用箱`).
+    The trigger is long, multi-line questions with hundreds of CJK
+    characters: that is exactly when reflexive escaping kicks in and
+    exactly when miscoding is most damaging. Long ≠ escape. Keep
+    characters literal.
+
+    Wrong: `"question": "請選擇\uXXXX\uXXXX\uXXXX\uXXXX"`
+    Right: `"question": "請選擇管理工具"`
+
+    Only JSON-mandatory escapes remain allowed: `\n`, `\t`, `\"`, `\\`.
+
 ### Self-check before emitting
 
 Before calling AskUserQuestion, verify:
@@ -359,6 +379,8 @@ Before calling AskUserQuestion, verify:
 - [ ] Tool call has no more than two related questions/tabs
 - [ ] No duplicated trade-off text between `question` and `options[].description`
 - [ ] You wrote the brief, then called the tool_use payload
+- [ ] You are calling the tool, not writing prose
+- [ ] Non-ASCII characters (CJK / accents) written directly, NOT \u-escaped
 
 
 ## Artifacts Sync (skill start)

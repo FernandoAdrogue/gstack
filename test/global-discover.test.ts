@@ -290,6 +290,157 @@ describe("gstack-global-discover", () => {
     });
   });
 
+  describe("codex originator bucketing (issue #1315)", () => {
+    let tmpDir: string;
+    let codexDir: string;
+    let repoDir: string;
+
+    beforeEach(() => {
+      tmpDir = mkdtempSync(join(tmpdir(), "gstack-codex-orig-"));
+      const now = new Date();
+      const y = now.getFullYear().toString();
+      const m = String(now.getMonth() + 1).padStart(2, "0");
+      const d = String(now.getDate()).padStart(2, "0");
+      codexDir = join(tmpDir, "codex-home", "sessions", y, m, d);
+      mkdirSync(codexDir, { recursive: true });
+
+      repoDir = join(tmpDir, "fake-repo");
+      mkdirSync(repoDir);
+      spawnSync("git", ["init"], { cwd: repoDir, stdio: "pipe" });
+      spawnSync("git", ["commit", "--allow-empty", "-m", "init"], {
+        cwd: repoDir,
+        stdio: "pipe",
+      });
+    });
+
+    afterEach(() => {
+      rmSync(tmpDir, { recursive: true, force: true });
+    });
+
+    function writeCodex(originator: string) {
+      const line = JSON.stringify({
+        timestamp: new Date().toISOString(),
+        type: "session_meta",
+        payload: { id: `t-${Math.random()}`, timestamp: new Date().toISOString(), cwd: repoDir, originator },
+      });
+      const name = `rollout-${new Date().toISOString().replace(/[:.]/g, "-")}-${Math.random().toString(36).slice(2)}.jsonl`;
+      writeFileSync(join(codexDir, name), line + "\n");
+    }
+
+    function discover() {
+      const r = spawnSync(
+        "bun",
+        ["run", scriptPath, "--since", "1h", "--format", "json"],
+        {
+          encoding: "utf-8",
+          timeout: 30000,
+          env: { ...process.env, CODEX_SESSIONS_DIR: join(tmpDir, "codex-home", "sessions") },
+        }
+      );
+      expect(r.status).toBe(0);
+      return JSON.parse(r.stdout);
+    }
+
+    test("'Codex Desktop' originator → desktop bucket", () => {
+      writeCodex("Codex Desktop");
+      const json = discover();
+      expect(json.tools.codex.originators.desktop).toBe(1);
+      expect(json.tools.codex.originators.exec).toBe(0);
+      expect(json.tools.codex.originators.claude_code).toBe(0);
+    });
+
+    test("'codex_exec' originator → exec bucket", () => {
+      writeCodex("codex_exec");
+      const json = discover();
+      expect(json.tools.codex.originators.exec).toBe(1);
+      expect(json.tools.codex.originators.desktop).toBe(0);
+    });
+
+    test("'Claude Code' originator → claude_code bucket", () => {
+      writeCodex("Claude Code");
+      const json = discover();
+      expect(json.tools.codex.originators.claude_code).toBe(1);
+      expect(json.tools.codex.originators.desktop).toBe(0);
+      expect(json.tools.codex.originators.exec).toBe(0);
+    });
+
+    test("unknown originator → other bucket (not silently dropped)", () => {
+      writeCodex("future-agent-name-not-yet-mapped");
+      const json = discover();
+      expect(json.tools.codex.originators.other).toBe(1);
+      expect(json.tools.codex.total_sessions).toBe(1);
+    });
+
+    test("per-repo codex_originators sums to per-repo codex count", () => {
+      writeCodex("Codex Desktop");
+      writeCodex("codex_exec");
+      writeCodex("codex_exec");
+      writeCodex("Claude Code");
+      const json = discover();
+      // The fake repo's normalized remote will be local: form; just find it.
+      const repo = json.repos.find((r: any) => r.paths.includes(repoDir));
+      expect(repo).toBeDefined();
+      const o = repo.codex_originators;
+      expect(o.desktop + o.exec + o.claude_code + o.other).toBe(repo.sessions.codex);
+      expect(o.desktop).toBe(1);
+      expect(o.exec).toBe(2);
+      expect(o.claude_code).toBe(1);
+    });
+  });
+
+  describe("CC jsonl with >8KB first line (issue #1315 Problem 2)", () => {
+    let tmpDir: string;
+    let ccProjectsDir: string;
+    let realRepoDir: string;
+
+    beforeEach(() => {
+      tmpDir = mkdtempSync(join(tmpdir(), "gstack-cc-bigline-"));
+      // Real repo on disk so resolveClaudeCodeCwd can verify it.
+      realRepoDir = join(tmpDir, "real-repo");
+      mkdirSync(realRepoDir);
+      spawnSync("git", ["init"], { cwd: realRepoDir, stdio: "pipe" });
+      spawnSync("git", ["commit", "--allow-empty", "-m", "init"], { cwd: realRepoDir, stdio: "pipe" });
+      // CC project dir is a CCR / cron-style decoded path that does NOT exist
+      // on disk, so resolveClaudeCodeCwd falls to extractCwdFromJsonl.
+      const fakeProjectName = "-tmp-does-not-exist-on-disk-blogger-lab";
+      ccProjectsDir = join(tmpDir, "claude-home", "projects", fakeProjectName);
+      mkdirSync(ccProjectsDir, { recursive: true });
+    });
+
+    afterEach(() => {
+      rmSync(tmpDir, { recursive: true, force: true });
+    });
+
+    test("first-line queue-operation >8KB no longer hides cwd on later line", () => {
+      // Recreate the Akagilnc scenario: first line is a huge queue-operation
+      // event with no `cwd`, second line carries the real cwd.
+      const bigLine = JSON.stringify({
+        type: "queue-operation",
+        payload: { junk: "x".repeat(40000) },
+      });
+      expect(bigLine.length).toBeGreaterThan(30000);
+      const cwdLine = JSON.stringify({ type: "summary", cwd: realRepoDir });
+      const jsonl = bigLine + "\n" + cwdLine + "\n";
+      writeFileSync(join(ccProjectsDir, "session-1.jsonl"), jsonl);
+
+      const r = spawnSync(
+        "bun",
+        ["run", scriptPath, "--since", "1h", "--format", "json"],
+        {
+          encoding: "utf-8",
+          timeout: 30000,
+          env: { ...process.env, HOME: join(tmpDir, "claude-home"), CLAUDE_PROJECTS_DIR: join(tmpDir, "claude-home", "projects") },
+        }
+      );
+      expect(r.status).toBe(0);
+      const json = JSON.parse(r.stdout);
+      // The fake repo should now be discovered as a CC session.
+      const found = json.repos.find((repo: any) => repo.paths.includes(realRepoDir));
+      expect(found).toBeDefined();
+      expect(found.sessions.claude_code).toBeGreaterThanOrEqual(1);
+    });
+  });
+
   describe("discovery output structure", () => {
     test("repos have required fields", () => {
       const result = spawnSync(
@@ -327,6 +478,26 @@ describe("gstack-global-discover", () => {
         json.tools.codex.total_sessions +
         json.tools.gemini.total_sessions;
       expect(json.total_sessions).toBe(toolTotal);
+    });
+
+    test("repos expose codex_originators breakdown", () => {
+      const result = spawnSync(
+        "bun",
+        ["run", scriptPath, "--since", "30d", "--format", "json"],
+        { encoding: "utf-8", timeout: 30000 }
+      );
+      const json = JSON.parse(result.stdout);
+      expect(json.tools.codex).toHaveProperty("originators");
+      const o = json.tools.codex.originators;
+      for (const k of ["desktop", "exec", "claude_code", "other"]) {
+        expect(o).toHaveProperty(k);
+        expect(typeof o[k]).toBe("number");
+      }
+      // Sum of originators must equal codex total_sessions.
+      expect(o.desktop + o.exec + o.claude_code + o.other).toBe(json.tools.codex.total_sessions);
+      for (const repo of json.repos) {
+        expect(repo).toHaveProperty("codex_originators");
+      }
     });
 
     test("deduplicates Conductor workspaces by remote", () => {

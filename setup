@@ -443,6 +443,18 @@ link_claude_skill_dirs() {
       # Validate target isn't a symlink before creating the link
       if [ -L "$target/SKILL.md" ]; then rm "$target/SKILL.md"; fi
       _link_or_copy "$gstack_dir/$dir_name/SKILL.md" "$target/SKILL.md"
+      # Also link bin/ when the source skill ships one. PreToolUse hook
+      # frontmatter references $CLAUDE_SKILL_DIR/bin/<script>; without
+      # this link those paths resolve to a non-existent target and the
+      # hook silently no-ops (issue #1459). Same fix applies to every
+      # skill that publishes scripts -- freeze, careful, browse, etc.
+      # Routes through _link_or_copy so Windows installs without
+      # Developer Mode get a directory copy instead of a frozen symlink.
+      if [ -d "$gstack_dir/$dir_name/bin" ]; then
+        if [ -L "$target/bin" ]; then rm "$target/bin"; fi
+        if [ -e "$target/bin" ] && [ ! -L "$target/bin" ]; then rm -rf "$target/bin"; fi
+        _link_or_copy "$gstack_dir/$dir_name/bin" "$target/bin"
+      fi
       linked+=("$link_name")
     fi
   done

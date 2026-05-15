@@ -115,6 +115,13 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
+  // Per-request timeout for OpenAI image-generation calls. Distinct from the
+  // existing `--timeout` flag, which controls the `compare --serve` / `serve`
+  // HTTP listener. See issue #1519.
+  const apiTimeoutMs = flags["api-timeout"]
+    ? parseInt(flags["api-timeout"] as string)
+    : undefined;
+
   switch (command) {
     case "generate":
       await generate({
@@ -125,6 +132,7 @@ async function main(): Promise<void> {
         retry: flags.retry ? parseInt(flags.retry as string) : 0,
         size: flags.size as string,
         quality: flags.quality as string,
+        apiTimeoutMs,
       });
       break;
 
@@ -175,6 +183,7 @@ async function main(): Promise<void> {
         size: flags.size as string,
         quality: flags.quality as string,
         viewports: flags.viewports as string,
+        apiTimeoutMs,
       });
       break;
 
@@ -183,6 +192,7 @@ async function main(): Promise<void> {
         session: flags.session as string,
         feedback: flags.feedback as string,
         output: (flags.output as string) || "/tmp/gstack-iterate.png",
+        apiTimeoutMs,
       });
       break;
 
@@ -235,6 +245,7 @@ async function main(): Promise<void> {
         screenshot: flags.screenshot as string,
         brief: flags.brief as string,
         output: (flags.output as string) || "/tmp/gstack-evolved.png",
+        apiTimeoutMs,
       });
       break;
 

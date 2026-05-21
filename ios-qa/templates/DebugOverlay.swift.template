@@ -1,0 +1,313 @@
+import SwiftUI
+
+#if DEBUG && canImport(UIKit)
+import UIKit
+
+// MARK: - Overlay Window (stays above sheets, alerts, and modals)
+
+@MainActor
+public final class DebugOverlayWindow {
+    public static let shared = DebugOverlayWindow()
+    private var window: UIWindow?
+
+    private init() {}
+
+    public func install() {
+        guard window == nil else { return }
+        guard let scene = UIApplication.shared.connectedScenes
+            .compactMap({ $0 as? UIWindowScene })
+            .first else { return }
+
+        let overlayWindow = PassthroughWindow(windowScene: scene)
+        overlayWindow.windowLevel = .alert + 1
+        overlayWindow.backgroundColor = .clear
+        overlayWindow.isHidden = false
+
+        let hostingController = UIHostingController(rootView: DebugOverlayView())
+        hostingController.view.backgroundColor = .clear
+        hostingController.view.isAccessibilityElement = false
+        hostingController.view.accessibilityElementsHidden = true
+        overlayWindow.rootViewController = hostingController
+        overlayWindow.accessibilityElementsHidden = true
+
+        self.window = overlayWindow
+    }
+}
+
+class PassthroughWindow: UIWindow {
+    override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
+        return nil
+    }
+}
+
+// MARK: - Debug Overlay View
+
+struct TapRipple: Identifiable {
+    let id = UUID()
+    let x: CGFloat
+    let y: CGFloat
+}
+
+struct TapRippleView: View {
+    let ripple: TapRipple
+    let onComplete: () -> Void
+    @State private var ringScale: CGFloat = 0.1
+    @State private var ringOpacity: Double = 0.9
+    @State private var dotOpacity: Double = 1.0
+
+    var body: some View {
+        ZStack {
+            // Expanding ring
+            Circle()
+                .strokeBorder(Color.cyan.opacity(ringOpacity), lineWidth: 2)
+                .frame(width: 56, height: 56)
+                .scaleEffect(ringScale)
+
+            // Center dot
+            Circle()
+                .fill(Color.cyan.opacity(dotOpacity))
+                .frame(width: 10, height: 10)
+        }
+        .position(x: ripple.x, y: ripple.y)
+        .allowsHitTesting(false)
+        .onAppear {
+            withAnimation(.easeOut(duration: 0.45)) {
+                ringScale = 1.0
+                ringOpacity = 0
+            }
+            withAnimation(.easeIn(duration: 0.15)) {
+                dotOpacity = 0
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                onComplete()
+            }
+        }
+    }
+}
+
+public struct DebugOverlayView: View {
+    @State private var isConnected = false
+    @State private var lastAction = ""
+    @State private var showingAction = false
+    @State private var gradientRotation: Double = 0
+    @State private var borderWidth: CGFloat = 5
+    @State private var pulseScale: CGFloat = 1.0
+    @State private var tapRipples: [TapRipple] = []
+
+    public init() {}
+
+    public var body: some View {
+        GeometryReader { geo in
+            ZStack {
+                if isConnected {
+                    // Layer 1: Outermost aura — wide, soft, fades inward from edges
+                    RoundedRectangle(cornerRadius: 44)
+                        .strokeBorder(
+                            AngularGradient(
+                                gradient: Gradient(colors: [
+                                    .cyan.opacity(0.15), .blue.opacity(0.05),
+                                    .purple.opacity(0.15), .cyan.opacity(0.05),
+                                    .blue.opacity(0.15), .purple.opacity(0.05),
+                                    .cyan.opacity(0.15)
+                                ]),
+                                center: .center,
+                                startAngle: .degrees(gradientRotation + 90),
+                                endAngle: .degrees(gradientRotation + 450)
+                            ),
+                            lineWidth: 40
+                        )
+                        .blur(radius: 20)
+                        .scaleEffect(pulseScale)
+
+                    // Layer 2: Mid glow — tighter, more color
+                    RoundedRectangle(cornerRadius: 30)
+                        .strokeBorder(
+                            AngularGradient(
+                                gradient: Gradient(colors: [
+                                    .cyan.opacity(0.4), .blue.opacity(0.2),
+                                    .purple.opacity(0.4), .cyan.opacity(0.2),
+                                    .blue.opacity(0.4), .purple.opacity(0.2),
+                                    .cyan.opacity(0.4)
+                                ]),
+                                center: .center,
+                                startAngle: .degrees(gradientRotation + 180),
+                                endAngle: .degrees(gradientRotation + 540)
+                            ),
+                            lineWidth: 16
+                        )
+                        .blur(radius: 8)
+
+                    // Layer 3: Core border — sharp, vibrant, animated rotation
+                    RoundedRectangle(cornerRadius: 20)
+                        .strokeBorder(
+                            AngularGradient(
+                                gradient: Gradient(colors: [
+                                    Color(red: 0.0, green: 0.5, blue: 1.0),
+                                    Color(red: 0.0, green: 0.85, blue: 1.0),
+                                    Color(red: 0.4, green: 0.3, blue: 1.0),
+                                    Color(red: 0.0, green: 0.7, blue: 1.0),
+                                    Color(red: 0.2, green: 0.9, blue: 0.9),
+                                    Color(red: 0.5, green: 0.2, blue: 1.0),
+                                    Color(red: 0.0, green: 0.5, blue: 1.0),
+                                ]),
+                                center: .center,
+                                startAngle: .degrees(gradientRotation),
+                                endAngle: .degrees(gradientRotation + 360)
+                            ),
+                            lineWidth: borderWidth
+                        )
+
+                    // Layer 4: Inner tint — subtle color wash bleeding inward
+                    RoundedRectangle(cornerRadius: 20)
+                        .fill(
+                            RadialGradient(
+                                gradient: Gradient(colors: [
+                                    .clear,
+                                    .clear,
+                                    .clear,
+                                    .cyan.opacity(0.03),
+                                    .blue.opacity(0.06)
+                                ]),
+                                center: .center,
+                                startRadius: min(geo.size.width, geo.size.height) * 0.3,
+                                endRadius: max(geo.size.width, geo.size.height) * 0.55
+                            )
+                        )
+                }
+
+                // Tap ripple animations
+                ForEach(tapRipples) { ripple in
+                    TapRippleView(ripple: ripple) {
+                        tapRipples.removeAll { $0.id == ripple.id }
+                    }
+                }
+
+                // Bottom-left compact pill (doesn't block toolbar buttons)
+                VStack {
+                    Spacer()
+                    if isConnected {
+                        HStack(spacing: 6) {
+                            Circle()
+                                .fill(Color.cyan)
+                                .frame(width: 6, height: 6)
+                                .shadow(color: .cyan, radius: 3)
+
+                            Text(showingAction ? lastAction : "Claude")
+                                .font(.system(size: 10, weight: .medium, design: .monospaced))
+                                .foregroundColor(.white.opacity(0.8))
+                                .lineLimit(1)
+                        }
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 5)
+                        .background(
+                            Capsule()
+                                .fill(.ultraThinMaterial)
+                                .environment(\.colorScheme, .dark)
+                                .overlay(
+                                    Capsule()
+                                        .strokeBorder(.white.opacity(0.15), lineWidth: 0.5)
+                                )
+                        )
+                        .padding(.leading, 16)
+                        .padding(.bottom, getSafeAreaBottom() + 60)
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .ignoresSafeArea()
+        }
+        .ignoresSafeArea()
+        .allowsHitTesting(false)
+        .onAppear {
+            withAnimation(.linear(duration: 3.0).repeatForever(autoreverses: false)) {
+                gradientRotation = 360
+            }
+            withAnimation(.easeInOut(duration: 2.0).repeatForever(autoreverses: true)) {
+                pulseScale = 1.02
+            }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .debugBridgeConnected)) { _ in
+            withAnimation(.easeInOut(duration: 0.6)) {
+                isConnected = true
+            }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .debugBridgeDisconnected)) { _ in
+            withAnimation(.easeInOut(duration: 0.3)) {
+                isConnected = false
+            }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .debugBridgeAction)) { notification in
+            if let action = notification.userInfo?["action"] as? String {
+                lastAction = String(action.prefix(30))
+                withAnimation(.easeInOut(duration: 0.2)) { showingAction = true }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+                    withAnimation(.easeOut(duration: 0.3)) { showingAction = false }
+                }
+            }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .debugBridgeStateMutation)) { _ in
+            withAnimation(.easeIn(duration: 0.08)) {
+                borderWidth = 9
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) {
+                withAnimation(.easeOut(duration: 0.5)) {
+                    borderWidth = 5
+                }
+            }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .debugBridgeTap)) { notification in
+            if let x = notification.userInfo?["x"] as? CGFloat,
+               let y = notification.userInfo?["y"] as? CGFloat {
+                tapRipples.append(TapRipple(x: x, y: y))
+            }
+        }
+    }
+
+    private func getSafeAreaTop() -> CGFloat {
+        UIApplication.shared.connectedScenes
+            .compactMap { $0 as? UIWindowScene }
+            .flatMap(\.windows)
+            .first { $0.isKeyWindow }?
+            .safeAreaInsets.top ?? 0
+    }
+
+    private func getSafeAreaBottom() -> CGFloat {
+        UIApplication.shared.connectedScenes
+            .compactMap { $0 as? UIWindowScene }
+            .flatMap(\.windows)
+            .first { $0.isKeyWindow }?
+            .safeAreaInsets.bottom ?? 0
+    }
+}
+
+// MARK: - Notification Names
+
+extension Notification.Name {
+    public static let debugBridgeConnected = Notification.Name("debugBridgeConnected")
+    public static let debugBridgeDisconnected = Notification.Name("debugBridgeDisconnected")
+    public static let debugBridgeAction = Notification.Name("debugBridgeAction")
+    public static let debugBridgeStateMutation = Notification.Name("debugBridgeStateMutation")
+    public static let debugBridgeTap = Notification.Name("debugBridgeTap")
+}
+
+// MARK: - Notifier
+
+public enum DebugBridgeNotifier {
+    public static func connected() {
+        NotificationCenter.default.post(name: .debugBridgeConnected, object: nil)
+    }
+    public static func disconnected() {
+        NotificationCenter.default.post(name: .debugBridgeDisconnected, object: nil)
+    }
+    public static func action(_ description: String) {
+        NotificationCenter.default.post(name: .debugBridgeAction, object: nil, userInfo: ["action": description])
+    }
+    public static func stateMutation() {
+        NotificationCenter.default.post(name: .debugBridgeStateMutation, object: nil)
+    }
+    public static func tap(at point: CGPoint) {
+        NotificationCenter.default.post(name: .debugBridgeTap, object: nil, userInfo: ["x": point.x, "y": point.y])
+    }
+}
+
+#endif

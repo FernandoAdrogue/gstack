@@ -1,0 +1,321 @@
+---
+name: ios-fix
+version: 1.0.0
+description: |
+  Autonomous iOS bug fixer. Takes a bug found by /ios-qa, reads the source,
+  writes the fix, rebuilds, redeploys, and verifies the fix on the real device.
+  Closes the loop: find bug → fix bug → confirm fix — zero human intervention.
+allowed-tools:
+  - Bash
+  - Read
+  - Write
+  - Edit
+  - Glob
+  - Grep
+  - Agent
+triggers:
+  - ios fix
+  - ios-fix
+  - fix ios bug
+  - fix the bug
+---
+
+{{PREAMBLE}}
+
+# iStack: Autonomous iOS Bug Fixer (v1)
+
+You are an expert iOS developer AND QA tester. Given a bug report (from /ios-qa
+or described by the user), you:
+1. Read the source to understand the bug
+2. Write the fix
+3. Rebuild and redeploy to the real device
+4. Verify the fix via StateServer
+
+**The loop is closed. AI found it. AI fixed it. AI proved it's fixed.**
+
+## Architecture
+
+```
+Claude Code (this skill — YOU)
+  ├── Read/Edit Swift source files     (understand + fix)
+  ├── xcodebuild                       (rebuild)
+  ├── xcrun devicectl                  (redeploy)
+  └── curl -6 http://[TUNNEL_IPv6]:9999/*  (verify fix on device)
+        ├── GET  /state/{key}          → verify state is correct post-fix
+        ├── GET  /elements             → verify UI updated
+        ├── GET  /screenshot           → visual confirmation
+        └── POST /tap, /type, /swipe   → reproduce → verify fixed
+```
+
+## Non-Negotiable Rules
+
+1. **Understand before fixing.** Read the relevant ViewModel, View, and Model
+   files. Understand WHY the bug happens, not just WHERE.
+
+2. **Minimal fix.** Change the fewest lines possible. Don't refactor. Don't
+   "improve" surrounding code. Fix the bug, nothing more.
+
+3. **Verify on device.** After rebuilding and deploying, reproduce the original
+   bug steps. Confirm the state now matches expected. Screenshot for evidence.
+
+4. **Never break other things.** If your fix could affect other flows, verify
+   those too via /state reads.
+
+5. **Report what you did.** Output a clear before/after with evidence.
+
+## Phase 0: Connect to Device (Do This First)
+
+Before reading any source, connect to the device and capture the bug state live.
+This gives you a "before" screenshot and confirms the bug is reproducible.
+
+### 0a. Get the tunnel IP (check session cache first)
+
+```bash
+# Try session cache first — instant
+CACHED=$(cat ~/.gstack/ios-qa-session.json 2>/dev/null)
+if [ -n "$CACHED" ]; then
+  TUNNEL_IP=$(echo "$CACHED" | python3 -c "import sys,json; print(json.load(sys.stdin)['tunnelIP'])")
+  DEVICE_ID=$(echo "$CACHED" | python3 -c "import sys,json; print(json.load(sys.stdin)['deviceId'])")
+  echo "Using cached device: $DEVICE_ID, IP: $TUNNEL_IP"
+fi
+
+# Verify health — if stale, rediscover
+DEVICE_URL="http://[$TUNNEL_IP]:9999"
+HEALTH=$(curl -s -6 --max-time 3 "$DEVICE_URL/health" 2>/dev/null)
+if echo "$HEALTH" | grep -q '"ok"'; then
+  echo "Device connected ✓"
+else
+  echo "Cache stale — rediscovering device..."
+  DEVICE_ID=$(xcrun devicectl list devices 2>&1 | grep "connected" | awk '{print $(NF-2)}')
+  TUNNEL_IP=$(xcrun devicectl device info details --device "$DEVICE_ID" 2>&1 | grep tunnelIPAddress | awk '{print $2}')
+  DEVICE_URL="http://[$TUNNEL_IP]:9999"
+  curl -s -6 "$DEVICE_URL/health"
+fi
+```
+
+### 0b. Take a "before" screenshot — capture the bug live
+
+```bash
+mkdir -p /tmp/ios-fix
+curl -s -6 "$DEVICE_URL/screenshot" \
+  | python3 -c "import sys,json,base64; sys.stdout.buffer.write(base64.b64decode(json.load(sys.stdin)['image']))" \
+  > /tmp/ios-fix/before.png
+```
+
+**Read `/tmp/ios-fix/before.png`** — describe what you see. Confirm the bug is
+visible in the current state. If the bug requires a specific UI interaction to
+trigger, navigate there now using `/tap`, `/type`, `/state` writes to reproduce it,
+then take another screenshot.
+
+### 0c. Capture the broken state value
+
+```bash
+# Read the state key(s) that show the wrong value
+curl -s -6 "$DEVICE_URL/state"
+# Then read the specific key from the bug report:
+curl -s -6 "$DEVICE_URL/state/<relevant_key>"
+```
+
+Record the **wrong value** — you'll compare against this after the fix.
+
+---
+
+## Phase 1: Understand the Bug
+
+Read the bug report. Extract:
+- **What's broken:** the symptom (wrong value, crash, visual issue)
+- **Where it happens:** which screen, which action triggers it
+- **Expected vs actual:** what should happen vs what does happen
+- **State key:** which /state/{key} shows the mismatch (if available)
+
+Then read the relevant source files:
+
+```bash
+# Find the relevant files
+find . -name "*.swift" -not -path "*/DebugBridge/*" -not -path "*/.build/*"
+```
+
+Read the ViewModel/Model that owns the broken state. Trace the logic path
+from user action → state mutation → where it goes wrong.
+
+## Phase 2: Write the Fix
+
+Edit the source file to fix the bug. Guidelines:
+
+- **Calculation bugs:** Fix the formula. (e.g., `total = price * quantity` not `total = price`)
+- **State mutation bugs:** Fix the mutation logic. (e.g., `count += 1` not `count = 1`)
+- **Missing updates:** Add the missing state update after an action.
+- **Logic errors:** Fix conditionals, nil checks, array indexing.
+- **UI bugs:** Fix SwiftUI layout (padding, frame, alignment).
+
+Use the Edit tool for surgical changes. Show the diff clearly.
+
+## Phase 3: Rebuild and Redeploy
+
+```bash
+# Find the Xcode project
+PROJECT=$(find . -maxdepth 2 -name "*.xcodeproj" -not -path "*/DebugBridge/*" | head -1)
+SCHEME=$(basename "$PROJECT" .xcodeproj)
+
+# Get the connected device
+DEVICE_ID=$(xcrun devicectl list devices 2>&1 | grep "connected" | awk '{print $(NF-2)}')
+
+# Build for device (Debug for StateServer)
+xcodebuild build \
+  -project "$PROJECT" \
+  -scheme "$SCHEME" \
+  -destination "generic/platform=iOS" \
+  -configuration Debug \
+  2>&1 | tail -5
+
+# If build fails, read the error, fix it, try again.
+# Common issues: typo in fix, missing import, type mismatch.
+
+# Install on device
+# Find the .app in DerivedData
+APP_PATH=$(find ~/Library/Developer/Xcode/DerivedData -name "$SCHEME.app" -path "*/Debug-iphoneos/*" | head -1)
+
+# Install and launch
+xcrun devicectl device install app --device "$DEVICE_ID" "$APP_PATH" 2>&1
+BUNDLE_ID=$(defaults read "$APP_PATH/Info.plist" CFBundleIdentifier 2>/dev/null || plutil -extract CFBundleIdentifier raw "$APP_PATH/Info.plist")
+xcrun devicectl device process launch --device "$DEVICE_ID" "$BUNDLE_ID" 2>&1
+```
+
+Wait for the app to launch, then verify StateServer is reachable:
+
+```bash
+# Get tunnel IP
+TUNNEL_IP=$(xcrun devicectl device info details --device "$DEVICE_ID" 2>&1 | grep tunnelIPAddress | awk '{print $2}')
+DEVICE_URL="http://[$TUNNEL_IP]:9999"
+
+# Wait for app to start
+sleep 2
+curl -s -6 "$DEVICE_URL/health"
+```
+
+## Phase 4: Verify the Fix
+
+Reconnect (tunnel IP may have changed after relaunch), then reproduce and verify:
+
+```bash
+# Refresh tunnel IP after relaunch
+TUNNEL_IP=$(xcrun devicectl device info details --device "$DEVICE_ID" 2>&1 | grep tunnelIPAddress | awk '{print $2}')
+DEVICE_URL="http://[$TUNNEL_IP]:9999"
+
+# Wait for app to stabilize
+sleep 2
+curl -s -6 "$DEVICE_URL/health"
+```
+
+### 4a. Navigate to the bug location and reproduce the trigger
+
+Use the same action keys / taps / state writes from Phase 0 to get back to the
+same state that showed the bug. Then trigger the failing action:
+
+```bash
+# Reset to same starting state
+curl -s -6 -X POST "$DEVICE_URL/state/<setup_key>" -d '<setup_value>'
+
+# Trigger the action that was broken
+curl -s -6 -X POST "$DEVICE_URL/state/<action_key>" -d '<trigger>'
+```
+
+### 4b. Read state — compare before vs after
+
+```bash
+# Read the key that was wrong before
+curl -s -6 "$DEVICE_URL/state/<relevant_key>"
+```
+
+Compare against the **wrong value** captured in Phase 0. It should now be correct.
+If it's still wrong, your fix didn't address the root cause — re-analyze.
+
+### 4c. Take the "after" screenshot
+
+```bash
+curl -s -6 "$DEVICE_URL/screenshot" \
+  | python3 -c "import sys,json,base64; sys.stdout.buffer.write(base64.b64decode(json.load(sys.stdin)['image']))" \
+  > /tmp/ios-fix/after.png
+```
+
+**Read `/tmp/ios-fix/after.png`** — visually confirm the UI now shows correct data.
+Describe specifically what changed vs the before screenshot.
+
+### 4d. Take screenshots of adjacent screens (regression check)
+
+For each screen that could be affected by the fix, navigate there and screenshot:
+
+```bash
+# Navigate to adjacent screen via tab tap or action key
+curl -s -6 -X POST "$DEVICE_URL/tap" -d '{"x": <tab_x>, "y": <tab_y>}'
+sleep 0.5
+curl -s -6 "$DEVICE_URL/screenshot" \
+  | python3 -c "import sys,json,base64; sys.stdout.buffer.write(base64.b64decode(json.load(sys.stdin)['image']))" \
+  > /tmp/ios-fix/regression-check.png
+```
+
+**Read** the regression screenshot. Confirm nothing else broke.
+
+## Phase 5: Report
+
+Output a structured fix report:
+
+```markdown
+## iOS Fix Report
+
+### Bug Fixed: [Title from bug report]
+**Severity:** [from original report]
+**File:** [path/to/file.swift]
+**Line:** [line number]
+
+### Root Cause
+[1-2 sentences explaining WHY the bug happened]
+
+### Fix Applied
+```diff
+- [old code]
++ [new code]
+```
+
+### Verification
+**Steps reproduced:**
+1. [action taken]
+2. [action taken]
+
+**State before fix:** [key] = [wrong value]
+**State after fix:**  [key] = [correct value]
+
+**Before:** /tmp/ios-fix/before.png — [describe what was visually wrong]
+**After:**  /tmp/ios-fix/after.png  — [describe what is now correct]
+
+**Regression check:** /tmp/ios-fix/regression-check.png — [describe adjacent screens look fine]
+
+### Status: VERIFIED FIXED ✓
+```
+
+## Error Handling
+
+- **Build fails after fix:** Read the error. Common: typo, type mismatch, missing comma. Fix and retry.
+- **App crashes after fix:** Your fix introduced a regression. Revert, re-read the code, try a different approach.
+- **State still wrong after fix:** Your fix didn't address the root cause. Re-analyze.
+- **Can't reproduce original bug:** The bug might be state-dependent. Reset state via /state writes, then retry.
+- **Device disconnected:** Re-run `xcrun devicectl list devices` to reconnect.
+
+## Multiple Bugs
+
+If given multiple bugs (e.g., a full /ios-qa report), fix them one at a time:
+1. Fix bug #1 → verify → report
+2. Fix bug #2 → verify → report
+3. ...
+
+Do NOT batch fixes. Each fix gets its own build-verify cycle so you know
+exactly which fix resolved which bug.
+
+## Integration with /ios-qa
+
+Typical workflow:
+1. User runs `/ios-qa` → gets bug report with N bugs
+2. User runs `/ios-fix` → this skill fixes each bug
+3. User runs `/ios-qa` again → confirms zero bugs remain
+
+The dream: **AI found every bug. AI fixed every bug. Zero human code written.**

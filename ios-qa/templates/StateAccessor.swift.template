@@ -1,0 +1,74 @@
+import Foundation
+#if DEBUG
+import DebugBridge
+
+// Auto-generated state accessor for {{CLASS_NAME}}
+// DO NOT EDIT - regenerate with /ios-qa
+
+@MainActor
+enum {{CLASS_NAME}}Accessor {
+
+    static func register(on server: StateServer, instance: {{CLASS_NAME}}) {
+        {{READ_REGISTRATIONS}}
+        {{WRITE_REGISTRATIONS}}
+        {{ACTION_REGISTRATIONS}}
+    }
+}
+
+// --- Registration pattern (generated per-property) ---
+//
+// READ:
+//   server.registerRead("{{CLASS_NAME}}_propertyName") {
+//       return "\(instance.propertyName)"
+//   }
+//
+// WRITE:
+//   server.registerWrite("{{CLASS_NAME}}_propertyName") { value in
+//       // parse value from JSON string body
+//       instance.propertyName = parsed
+//       return true
+//   }
+//
+// Type-specific patterns:
+//   String:   instance.prop = value (body is the raw string)
+//   Int:      Int(value) → instance.prop
+//   Double:   Double(value) → instance.prop
+//   Bool:     value == "true" → instance.prop
+//   [T]:      if value == "[]" → instance.prop = []
+//   T?:       if value == "null" → instance.prop = nil
+//
+// --- Action registration pattern (generated per-function) ---
+//
+// For every `func` in the ViewModel that mutates state, generate an
+// action key so the QA agent can invoke it directly without tapping UI:
+//
+// ACTION (no params):
+//   server.registerWrite("{{CLASS_NAME}}_functionName") { _ in
+//       instance.functionName()
+//       return true
+//   }
+//
+// ACTION (with params, comma-separated body):
+//   server.registerWrite("{{CLASS_NAME}}_functionName") { value in
+//       let parts = value.split(separator: ",").map(String.init)
+//       guard let arg1 = Type(parts[0]) else { return false }
+//       instance.functionName(arg1: arg1)
+//       return true
+//   }
+//
+// ACTION (data injection — add items with specific dates for testing):
+//   server.registerWrite("{{CLASS_NAME}}_addItem") { value in
+//       // Parse CSV: "field1,field2,field3,daysAgo"
+//       let parts = value.split(separator: ",").map(String.init)
+//       guard parts.count >= N else { return false }
+//       let date = Date().addingTimeInterval(-(Double(parts.last!) ?? 0) * 86400)
+//       let item = ItemType(...)
+//       instance.addItem(item)
+//       return true
+//   }
+//
+// IMPORTANT: Generate action keys for ALL mutating functions during code-gen.
+// This eliminates the need to tap buttons for state mutations and prevents
+// mid-QA rebuild cycles. The agent can test any ViewModel function directly.
+
+#endif

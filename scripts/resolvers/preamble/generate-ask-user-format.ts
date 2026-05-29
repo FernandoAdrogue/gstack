@@ -52,7 +52,36 @@ Tool payload rules:
 - Ask one decision per tool call when possible; batch at most two related questions/tabs. Sequence independent decisions instead of sending 3+ tabs.
 - Do not duplicate the same trade-off text in both \`question\` and \`options[].description\`. Prefer putting option-specific trade-offs in \`options[].description\`.
 
-12. **Non-ASCII characters — write directly, never \\u-escape.** When any
+### Handling 5+ options — split, never drop
+
+AskUserQuestion caps every call at **4 options**. With 5+ real options, NEVER
+drop, merge, or silently defer one to fit. Pick a compliant shape:
+
+- **Batch into ≤4-groups** — for coherent alternatives (e.g. version bumps,
+  layout variants). One call, 5th surfaced only if first 4 don't fit.
+- **Split per-option** — for independent scope items (e.g. "ship E1..E6?").
+  Fire N sequential calls, one per option. Default to this when unsure.
+
+Per-option call shape: \`D<N>.k\` header (e.g. D3.1..D3.5), ELI10 per option,
+Recommendation, kind-note (no completeness score — Include/Defer/Cut/Hold are
+decision actions), and 4 buckets:
+**A) Include**, **B) Defer**, **C) Cut**, **D) Hold** (stop chain, discuss).
+
+After the chain, fire \`D<N>.final\` to validate the assembled set (reprompt
+dependency conflicts) and confirm shipping it. Use \`D<N>.revise-<k>\` to
+revise one option without re-running the chain.
+
+For N>6, fire a \`D<N>.0\` meta-AskUserQuestion first (proceed / narrow / batch).
+
+question_ids for split chains: \`<skill>-split-<option-slug>\` (kebab-case ASCII,
+≤64 chars, \`-2\`/\`-3\` suffix on collision). The runtime checker
+(\`bin/gstack-question-preference\`) refuses \`never-ask\` on any \`*-split-*\` id,
+so split chains are never AUTO_DECIDE-eligible — the user's option set is sacred.
+
+**Full rule + worked examples + Hold/dependency semantics:** see
+\`docs/askuserquestion-split.md\` in the gstack repo. Read on demand when N>4.
+
+**Non-ASCII characters — write directly, never \\u-escape.** When any
     string field (question, option label, option description) contains
     Chinese (繁體/簡體), Japanese, Korean, or other non-ASCII text, emit
     the literal UTF-8 characters in the JSON string. **Never escape them
@@ -89,5 +118,8 @@ Before calling AskUserQuestion, verify:
 - [ ] You wrote the brief, then called the tool_use payload
 - [ ] You are calling the tool, not writing prose
 - [ ] Non-ASCII characters (CJK / accents) written directly, NOT \\u-escaped
+- [ ] If you had 5+ options, you split (or batched into ≤4-groups) — did NOT drop any
+- [ ] If you split, you checked dependencies between options before firing the chain
+- [ ] If a per-option Hold fires, you stopped the chain immediately (didn't queue)
 `;
 }

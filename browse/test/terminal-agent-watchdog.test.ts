@@ -7,7 +7,7 @@ import * as path from 'path';
 // The watchdog respawns terminal-agent when its PID dies. Live process-tree
 // tests would require spawning, killing, and observing across two real Bun
 // processes — slow and flaky in the free tier. These tripwires defend the
-// load-bearing properties: identity-based liveness check (not name match),
+// properties that matter: identity-based liveness check (not name match),
 // crash-loop guard, gated on ownsTerminalAgent, and cleared on shutdown.
 
 const SERVER_TS = path.resolve(new URL(import.meta.url).pathname, '..', '..', 'src', 'server.ts');

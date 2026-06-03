@@ -9,7 +9,7 @@ import * as path from 'path';
 // opens a new WS with the fresh attachToken, writes RIS to xterm when
 // the agent sends {type:"reattach-begin"}, then treats the next binary
 // frame as the scrollback replay payload. Static-grep tripwires defend
-// the load-bearing protocol invariants; live re-attach exercises belong
+// the protocol invariants; live re-attach exercises belong
 // in the e2e tier.
 
 const TERMINAL_JS = path.resolve(

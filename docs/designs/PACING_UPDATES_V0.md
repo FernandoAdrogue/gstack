@@ -28,7 +28,7 @@ During V1 planning, a pacing workstream was drafted: rank findings, auto-accept 
 4. **Pacing as prose can't invert existing control flow.** V1 planned to add a "rank findings, then ask" rule to preamble prose. But existing skill templates like `plan-eng-review/SKILL.md.tmpl` have per-section STOP/AskUserQuestion sequences. A prose rule in preamble can't reliably override a hardcoded per-section STOP. The behavioral change is sequencing, not prompt wording.
 5. **Flip mechanism has no implementation.** "Reply `flip <id>` to change" was prose. No command parser, no state store, no replay behavior. If the conversation compacts and the Silent Decisions block leaves context, the original decision is lost.
 6. **Migration prompt is itself an interrupt.** V1's post-upgrade migration prompt (offering to restore V0 prose) counts against the interruption budget V1.1 is trying to reduce. V1.1 must decide: exempt from budget, or include as interrupt-1-of-N?
-7. **First-run preamble prompts count too.** Lake intro, telemetry, proactive, routing injection — Louise saw all of them on first run. They're interruptions before the first real skill runs. V1.1 must audit which of these are load-bearing for new users vs. deferrable until session N.
+7. **First-run preamble prompts count too.** Lake intro, telemetry, proactive, routing injection — Louise saw all of them on first run. They're interruptions before the first real skill runs. V1.1 must audit which of these a new user truly needs vs. what can wait until session N.
 8. **Ranking formula not calibrated against real data.** V1 considered `product 0-8` (broken: `{0,1,2,4,8}` distribution), then `sum 0-6` with threshold ≥ 4. But neither was validated against actual finding distribution. V1.1 should instrument V0 question-log to measure what real findings look like, then calibrate.
 9. **"Every one-way door surfaces" vs "max 3 per phase" contradicts.** One-way cap = uncapped (safety); two-way cap = 3. But the plan had both rules without explicit precedence. V1.1 must state: one-way doors surface uncapped regardless of phase budget.
 10. **Undefined verification values.** V1 plan had "Silent Decisions block ≥ N entries" with N never defined, and `active: true` field in throughput JSON never defined. V1.1 gets concrete values.
@@ -49,7 +49,7 @@ During V1 planning, a pacing workstream was drafted: rank findings, auto-accept 
 
 6. **Migration-prompt budget decision.** Explicit rule: one-shot migration prompts are exempt from the per-phase interruption budget. Rationale: they fire before review phases start, not during.
 
-7. **First-run preamble audit.** Audit lake intro, telemetry, proactive, routing injection. For each: is this load-bearing for a first-time user, or deferrable? Likely outcome: suppress all but lake intro until session 2+. Offer remaining ones via a `/plan-tune first-run` command that users can invoke voluntarily.
+7. **First-run preamble audit.** Audit lake intro, telemetry, proactive, routing injection. For each: does a first-time user need this now, or can it wait? Likely outcome: suppress all but lake intro until session 2+. Offer remaining ones via a `/plan-tune first-run` command that users can invoke voluntarily.
 
 8. **Ranking threshold calibration.** Instrument V0's question-log (already running, has history). Measure the actual distribution of `severity × irreversibility × user-decision-matters` across recent CEO + Eng + DX + Design reviews. Pick threshold based on real data. Target: ~20% of findings surface, ~80% auto-accept.
 

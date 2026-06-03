@@ -121,7 +121,7 @@ function buildShippedFixture(): ShipFixture {
   return { workTree, bareRemote, setupLog };
 }
 
-/** Snapshot the load-bearing fixture state so we can compare post-run. */
+/** Snapshot the fixture state we compare post-run. */
 interface FixtureSnapshot {
   versionFile: string;
   packageVersion: string;

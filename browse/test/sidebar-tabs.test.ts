@@ -7,7 +7,7 @@
  * endpoints are gone, and the primary-tab nav (Terminal | Chat) is
  * gone. Terminal is now the sole primary surface.
  *
- * This file locks the load-bearing invariants of that layout so a
+ * This file locks the layout invariants so a
  * future refactor can't silently re-introduce the old surface or break
  * the new one.
  */

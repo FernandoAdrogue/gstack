@@ -1,7 +1,7 @@
 /**
  * /plan-ceo-review per-finding AskUserQuestion count (periodic, paid, real-PTY).
  *
- * Asserts the load-bearing rule "One issue = one AskUserQuestion call" by
+ * Asserts the rule "One issue = one AskUserQuestion call" by
  * driving /plan-ceo-review against a 5-finding seeded plan and counting
  * distinct review-phase AUQs. Passes when count is in [N-1, N+2].
  *

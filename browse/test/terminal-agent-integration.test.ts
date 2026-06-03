@@ -204,7 +204,7 @@ describe('terminal-agent: PTY round-trip via real WebSocket (Cookie auth)', () =
     // `protocols` cleanly when also passed `headers` (the constructor
     // detects the third-arg form unreliably). Real browsers (Chromium)
     // use the standard protocols arg fine — the server-side handler is
-    // identical either way, so this test still locks the load-bearing
+    // identical either way, so this test still locks the required
     // invariant: the agent accepts a token via Sec-WebSocket-Protocol
     // and echoes the protocol back so a browser would accept the upgrade.
     const handshakeKey = 'dGhlIHNhbXBsZSBub25jZQ==';

@@ -95,7 +95,7 @@ After the reframe, it presents premises for you to validate. Not "does this soun
 3. The narrowest wedge is a daily briefing that actually works
 4. CRM integration is a must-have, not a nice-to-have
 
-You agree, disagree, or adjust. Every premise you accept becomes load-bearing in the design doc.
+You agree, disagree, or adjust. Every premise you accept becomes binding in the design doc.
 
 ### Implementation alternatives
 
@@ -1190,7 +1190,7 @@ Three Greptile comments. One real fix. One auto-acknowledged. One false positive
 
 ## `/ios-qa`
 
-Live-device iOS QA. The fork's load-bearing insight was: don't simulate, don't run XCTest, don't bring up WebDriverAgent. Embed an HTTP server in the app under test, drive it from a Mac-side daemon over the USB CoreDevice IPv6 tunnel.
+Live-device iOS QA. The fork's main insight was: don't simulate, don't run XCTest, don't bring up WebDriverAgent. Embed an HTTP server in the app under test, drive it from a Mac-side daemon over the USB CoreDevice IPv6 tunnel.
 
 The agent reads your Swift source, finds `@Observable` classes with `@Snapshotable`-marked fields, codegens typed accessors, deploys a debug bridge, then runs a closed find→fix→verify loop.
 

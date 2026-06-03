@@ -92,7 +92,7 @@ describe('$B domain-skill (E2E gate tier)', () => {
     expect(await readSkill('127.0.0.1', 'e2e-test-slug')).toBeNull();
 
     // Three uses without flag with classifier_score=0 (the default until L4 is
-    // rewired) MUST stay quarantined per #1369. The gate is load-bearing: a
+    // rewired) MUST stay quarantined per #1369. The gate matters because a
     // quarantined skill written under the influence of a poisoned page would
     // otherwise auto-promote after three benign uses without the L4 body scan
     // ever running.

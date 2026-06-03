@@ -58,7 +58,7 @@ final class StateServerSmokeTests: XCTestCase {
         XCTAssertEqual(status, 401, "mutating endpoint without bearer must return 401")
     }
 
-    /// Boot token rotation is the load-bearing security property. Confirm:
+    /// Boot token rotation is the security property. Confirm:
     /// 1. Boot token is required for /auth/rotate
     /// 2. After rotation, boot token is dead
     /// 3. Rotated token works for subsequent calls

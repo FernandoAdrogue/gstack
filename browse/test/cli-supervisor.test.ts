@@ -12,7 +12,7 @@ import * as path from 'path';
 // terminal-agent watchdog.
 //
 // Live respawn tests belong in the e2e tier (real Bun.spawn cycles take
-// 3-8s each). These tripwires defend the load-bearing invariants:
+// 3-8s each). These tripwires defend the invariants that matter:
 // opt-in by default, signal handlers wired, crash-loop guard, env knobs.
 
 const CLI_TS = path.resolve(new URL(import.meta.url).pathname, '..', '..', 'src', 'cli.ts');

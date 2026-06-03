@@ -82,9 +82,9 @@ reviews                            internally measured                pack" exte
 
 ## Phase 0 — Eval coverage matrix (v1.45.0.0)
 
-**Goal:** every skill in gstack ships with at least one gate-tier eval AND one periodic-tier eval that asserts a must-have behavior. The eval suite becomes the design spec. This is the load-bearing claim of the plan — must come first.
+**Goal:** every skill in gstack ships with at least one gate-tier eval AND one periodic-tier eval that asserts a must-have behavior. The eval suite becomes the design spec. This is the claim the plan depends on and must come first.
 
-**Cross-model tension noted:** Codex argued this is a procrastination trap and shape-asserts are shallow. User explicitly chose full tiered coverage anyway (D9 = A), with rationale: "the eval suite IS the design spec; that commitment is the load-bearing claim of the whole plan." We accept the larger upfront investment.
+**Cross-model tension noted:** Codex argued this is a procrastination trap and shape-asserts are shallow. User explicitly chose full tiered coverage anyway (D9 = A), with rationale: "the eval suite IS the design spec; that commitment is the claim the whole plan depends on." We accept the larger upfront investment.
 
 **Mitigation of Codex's "shape vs quality" critique:** for orchestration/judgment skills (plan-ceo, office-hours, autoplan), the must-have isn't deterministic output — it's structural compliance (does it call AskUserQuestion in the right shape? does it follow the section order? does it persist artifacts?). Eval design must capture structural contracts, not output content. Where structural eval is impossible, that section is explicitly noted as "judgment-dependent, not eval-protected" — Codex's #2 critique is honored by NOT then stripping unprotected judgment prose.
 

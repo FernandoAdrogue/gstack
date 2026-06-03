@@ -10,7 +10,7 @@
  * V0 machinery:
  *   - plan-tune/ — the conversational inspection skill for /plan-tune
  *   - office-hours/ — sets the declared profile
- * For these, V0 vocabulary is load-bearing and must appear.
+ * For these, V0 vocabulary defines the contract and must appear.
  *
  * All other tier-≥2 skills: 5D dim names + archetype names must NOT appear.
  */

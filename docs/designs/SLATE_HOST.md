@@ -158,7 +158,7 @@ OPENCODE_TERMINAL
 ### Critical env vars for gstack integration
 
 **`SLATE_DISABLE_CLAUDE_CODE_SKILLS`** — When set, `.claude/skills/` loading is disabled.
-This makes publishing to `.slate/skills/` load-bearing, not just an optimization.
+This makes publishing to `.slate/skills/` required, not just an optimization.
 Without native `.slate/` publishing, gstack skills vanish when this flag is set.
 
 **`SLATE_TEST_HOME`** — Useful for E2E tests. Can redirect Slate's home directory

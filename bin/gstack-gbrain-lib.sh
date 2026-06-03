@@ -22,12 +22,12 @@
 #     Exported after read so sub-processes inherit the secret. Caller
 #     is responsible for `unset <VARNAME>` when done.
 #
-# Load-bearing for D3-eng (shared secret helper across PAT + URL paste),
+# Required for D3-eng (shared secret helper across PAT + URL paste),
 # D10 (env-var handoff, never argv), D11 (PAT scope disclosure + SIGINT
 # restore), D16 (pooler URL paste hygiene with redacted preview).
 
 # _gstack_gbrain_validate_varname <name> — returns 0 if usable, 2 otherwise.
-# `local LC_ALL=C` is load-bearing twice over:
+# `local LC_ALL=C` is needed twice over:
 #   1. In many macOS shells the default locale (e.g. en_US.UTF-8) makes `case`
 #      glob brackets like `[A-Z]` match lowercase letters too. Without the
 #      LC_ALL=C pin, names like `lower-case` pass validation and then trip

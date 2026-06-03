@@ -121,7 +121,7 @@ purpose — the user is typing directly to claude, there's no untrusted
 page content in the loop. Trust source is the keyboard, same as any
 local terminal.
 
-That trust assumption is load-bearing on three transport guarantees:
+That trust assumption depends on three transport guarantees:
 
 1. **Local-only listener.** terminal-agent.ts binds `127.0.0.1` only.
    The dual-listener tunnel surface (server.ts `TUNNEL_PATHS`) does

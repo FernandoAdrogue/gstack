@@ -1385,7 +1385,7 @@ chrome.runtime.onMessage.addListener((msg) => {
 // "intentional close" (sidebar closed, browser quit, extension reload)
 // from "transient blip" (wifi hiccup) reliably — Chrome routes the
 // former through code 1001 (going-away) and the latter through 1006
-// (abnormal), but neither is a load-bearing contract across browsers
+// (abnormal), but neither is a stable contract across browsers
 // and extension lifecycles.
 //
 // pagehide fires reliably for tab close, panel close, extension reload,

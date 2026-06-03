@@ -1,6 +1,6 @@
 # Why gstack uses Diataxis for documentation
 
-The two doc skills in gstack — `/document-release` and `/document-generate` — both speak Diataxis. New entities get scored across four quadrants. Coverage gaps surface in PR bodies tagged by quadrant. This doc explains why that vocabulary is load-bearing, and why a simpler "just write markdown" approach falls down at the scale gstack operates at.
+The two doc skills in gstack — `/document-release` and `/document-generate` — both speak Diataxis. New entities get scored across four quadrants. Coverage gaps surface in PR bodies tagged by quadrant. This doc explains why that vocabulary is structural to the workflow, and why a simpler "just write markdown" approach falls down at the scale gstack operates at.
 
 ## The problem
 

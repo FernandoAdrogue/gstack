@@ -31,7 +31,7 @@ export class GptAdapter implements ProviderAdapter {
 
   async run(opts: RunOpts): Promise<RunResult> {
     const start = Date.now();
-    // `-s read-only` is load-bearing safety. With `--skip-git-repo-check` we
+    // `-s read-only` is the safety setting that matters. With `--skip-git-repo-check` we
     // bypass codex's interactive trust prompt for unknown directories (benchmarks
     // often run in temp dirs / non-git paths), so the read-only sandbox is now
     // the only boundary preventing codex from mutating the workdir. If you ever

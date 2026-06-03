@@ -34,7 +34,7 @@
  * preference — that's a regression against the opt-in feature. If outcome
  * is 'plan_ready' with no AUTO_DECIDE text, the model auto-decided BUT
  * skipped the annotation (acceptable; AUTO_DECIDE annotation is good
- * practice but not the load-bearing behavior).
+ * practice but not the behavior under test).
  */
 
 import { describe, test, expect } from 'bun:test';

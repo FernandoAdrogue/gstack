@@ -7,7 +7,7 @@ import * as path from 'path';
 // The state machine is what turns a single network blip from "fall through
 // to ENDED state, click Restart" into "silent re-attach with scrollback
 // intact, keep typing." Live WS cycles + buffer-overflow exercises belong
-// in the e2e tier; these static-grep tripwires defend the load-bearing
+// in the e2e tier; these static-grep tripwires defend the required
 // protocol + correctness properties.
 
 const AGENT_TS = path.resolve(new URL(import.meta.url).pathname, '..', '..', 'src', 'terminal-agent.ts');

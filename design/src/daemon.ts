@@ -358,7 +358,7 @@ async function handlePublish(req: Request, origin: string): Promise<Response> {
 function handleBoardGet(board: Board): Response {
   board.lastTouched = Date.now();
   // No __GSTACK_SERVER_URL injection — board JS uses relative URLs that
-  // resolve against /boards/<id>/ (the trailing slash is load-bearing here;
+  // resolve against /boards/<id>/ (the trailing slash matters here;
   // the 301 from the bare /boards/<id> form ensures it).
   return new Response(board.htmlContent, {
     headers: { "Content-Type": "text/html; charset=utf-8" },

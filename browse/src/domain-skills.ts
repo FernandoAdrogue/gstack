@@ -296,7 +296,7 @@ export async function writeSkill(input: WriteSkillInput): Promise<DomainSkillRow
  *   - else stay quarantined with updated counter; user must run
  *     `domain-skill promote-to-global` manually
  *
- * The classifier_score > 0 gate is load-bearing: handleSave currently writes
+ * The classifier_score > 0 gate matters because handleSave currently writes
  * classifier_score=0 with the comment "L4 deferred to load-time / sidebar-agent
  * fills this in on first prompt-injection load," but sidebar-agent was ripped
  * (CLAUDE.md "Sidebar architecture") and nothing else updates the score, so

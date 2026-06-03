@@ -178,7 +178,7 @@ export function commitSkill(opts: CommitSkillOptions): string {
  * test failure (step 8 of /skillify) or approval rejection (step 9).
  *
  * Idempotent: missing dirs are not an error. Best-effort: failures are
- * swallowed (cleanup is fire-and-forget, not load-bearing).
+ * swallowed (cleanup is fire-and-forget, not required for success).
  */
 export function discardStaged(stagedDir: string): void {
   // Remove the leaf skill dir first, then the wrapper skillify-<spawnId>/.

@@ -3,7 +3,7 @@
  *
  * Asserts that the AskUserQuestion Format section renders BEFORE the
  * Model-Specific Behavioral Patch section in tier-≥2 preamble output.
- * This order is load-bearing: Opus 4.7 reads top-to-bottom and absorbs
+ * This order matters: Opus 4.7 reads top-to-bottom and absorbs
  * the first pacing directive it hits. v1.6.4.0 regressed plan-review
  * cadence because the overlay rendered first with "Batch your questions"
  * as the ambient default.

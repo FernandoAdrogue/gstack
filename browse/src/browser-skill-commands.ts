@@ -8,7 +8,7 @@
  *   test <name>                                — run script.test.ts via bun test
  *   rm <name> [--global]                       — tombstone a user-tier skill
  *
- * Load-bearing: spawnSkill mints a per-spawn scoped token (read+write scope)
+ * Security boundary: spawnSkill mints a per-spawn scoped token (read+write scope)
  * and passes it via GSTACK_SKILL_TOKEN. The skill never sees the daemon root
  * token. Untrusted skills get a scrubbed env (no $HOME, $PATH minimal, no
  * secrets like $GITHUB_TOKEN/$OPENAI_API_KEY/etc.) and a locked cwd. Trusted
@@ -216,7 +216,7 @@ function handleRm(args: string[], ctx: SkillCommandContext): string {
   return `Tombstoned "${name}" (${effectiveTier} tier) → ${dst}\n`;
 }
 
-// ─── spawnSkill (load-bearing) ──────────────────────────────────
+// ─── spawnSkill scoped token boundary ────────────────────────────────
 
 export interface SpawnSkillOptions {
   skill: BrowserSkill;

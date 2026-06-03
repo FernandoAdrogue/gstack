@@ -277,7 +277,7 @@ to `~/.gstack/security/attempts.jsonl` via `tunnel-denial-log.ts`. Before editin
 `server.ts`, `sse-session-cookie.ts`, or `tunnel-denial-log.ts`, read
 [ARCHITECTURE.md](ARCHITECTURE.md#dual-listener-tunnel-architecture-v1600) —
 the module boundary (no imports from `token-registry.ts` into `sse-session-cookie.ts`)
-is load-bearing for scope isolation.
+is what keeps scope isolated.
 
 **Unicode sanitization at server egress** (v1.38.0.0+). Every server egress that
 ships page-content-derived strings MUST go through `JSON.stringify(payload,

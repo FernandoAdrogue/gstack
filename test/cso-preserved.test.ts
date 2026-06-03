@@ -1,7 +1,7 @@
 /**
  * cso security-guidance preservation test (v1.45.0.0 T6).
  *
- * The cso skill carries load-bearing security prose: OWASP Top 10 mappings,
+ * The cso skill carries security prose the audit depends on: OWASP Top 10 mappings,
  * STRIDE threat-model phrasing, "do not auto-fix without user approval"
  * gates. Codex 2nd-pass critique #9: "cso exemption too broad ... should
  * still get resolver dedup, catalog trim, sectioning if safe, and targeted
@@ -37,7 +37,7 @@ const MUST_PRESERVE_HEADINGS = [
   '## Preamble',  // from PREAMBLE resolver
 ];
 
-describe('cso skill preserves load-bearing security guidance', () => {
+describe('cso skill preserves required security guidance', () => {
   test('cso/SKILL.md exists and is non-trivial', () => {
     expect(fs.existsSync(CSO_SKILL)).toBe(true);
     const content = fs.readFileSync(CSO_SKILL, 'utf-8');
@@ -54,7 +54,7 @@ describe('cso skill preserves load-bearing security guidance', () => {
     if (missing.length > 0) {
       throw new Error(
         `cso/SKILL.md is missing required security phrases: ${missing.join(', ')}. ` +
-        `These are load-bearing for the skill's audit posture. If you intentionally ` +
+        `These define the skill's audit posture. If you intentionally ` +
         `removed them, update this test with the new phrasing.`,
       );
     }

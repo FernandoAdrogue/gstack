@@ -1,5 +1,35 @@
 # Changelog
 
+## [1.57.7.0] - 2026-06-08
+
+## **`/ios-qa` sessions no longer die 30 seconds in.**
+## **The device tunnel now stays alive as long as you keep driving the phone.**
+
+The iOS QA daemon cached its USB-to-device tunnel for a flat 30 seconds measured
+from when it connected, and never reset that timer when you actually used it. Any
+vision-driven loop that paused to look at a screenshot and decide the next tap blew
+past 30 seconds, the cache expired, and the daemon tried to reconnect. That reconnect
+can't succeed: the on-device `StateServer` deletes its boot token the instant the
+daemon rotates it, so a reconnect against an app that's already running fails with
+`boot_token_unavailable` until you cold-relaunch the app. In practice the bridge died
+every half minute and couldn't heal itself.
+
+The cache is now a sliding idle-timeout. Every reused request refreshes the timer, so
+an active session holds the same live tunnel and its rotated bearer for as long as you
+keep working. The default idle window is 5 minutes (was 30 seconds), and
+`GSTACK_IOS_TUNNEL_CACHE_MS` overrides it for long pauses. A reconnect, with its
+boot-token trap, now only happens after a genuine idle gap, not mid-session.
+
+### Itemized changes
+
+#### Fixed
+- **iOS QA tunnel cache is now a sliding idle-timeout (`ios-qa/daemon/src/index.ts`).**
+  The 30s flat cache that wasn't refreshed on use caused the device bridge to
+  re-bootstrap mid-session and fail with `boot_token_unavailable` (the boot token is
+  deleted at `/auth/rotate`). Default idle window raised to 5 min and made configurable
+  via `GSTACK_IOS_TUNNEL_CACHE_MS`. Regression test asserts a burst of requests
+  bootstraps the tunnel exactly once.
+
 ## [1.57.6.0] - 2026-06-07
 
 ## **Eight community-filed bugs fixed in one wave, four of them security guards that were quietly failing open.**

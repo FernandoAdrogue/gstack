@@ -53,9 +53,17 @@ interface FakeEnv {
  * The classifier reads HOME via os.homedir() which reads process.env.HOME, so
  * we mutate process.env ambiently in each test (restored in afterEach).
  */
+type GbrainBehavior =
+  | "ok"
+  | "broken-db"
+  | "broken-config"
+  | "throws"
+  | "thin-client-ok"
+  | "thin-client-unhealthy";
+
 function makeEnv(opts: {
   withGbrain?: boolean;
-  gbrainBehavior?: "ok" | "broken-db" | "broken-config" | "throws";
+  gbrainBehavior?: GbrainBehavior;
   withConfig?: boolean;
 }): FakeEnv {
   const tmp = mkdtempSync(join(tmpdir(), "gbrain-local-status-test-"));
@@ -95,9 +103,9 @@ function makeEnv(opts: {
   };
 }
 
-function makeFakeGbrainScript(
-  behavior: "ok" | "broken-db" | "broken-config" | "throws",
-): string {
+function makeFakeGbrainScript(behavior: GbrainBehavior): string {
+  const isThinClient =
+    behavior === "thin-client-ok" || behavior === "thin-client-unhealthy";
   const stderrLine =
     behavior === "broken-db"
       ? 'echo "Cannot connect to database: . Fix: Check your connection URL in ~/.gbrain/config.json" >&2'
@@ -105,13 +113,27 @@ function makeFakeGbrainScript(
         ? 'echo "Error: malformed config.json at ~/.gbrain/config.json" >&2'
         : behavior === "throws"
           ? 'echo "unexpected gbrain failure" >&2'
-          : "";
+          : isThinClient
+            ? 'echo "\\`gbrain sources\\` is not routable. sources commands manage local DB + config rows. Per-subcommand thin-client routing lands in v0.31.x." >&2'
+            : "";
   const exitCode = behavior === "ok" ? 0 : 1;
+  // Thin-client doctor: mode-aware health signal the classifier falls back to
+  // when `sources list` is refused. doctor exits 1 when health_score < 100 but
+  // still prints JSON to stdout (matches real gbrain + #1415 recovery path).
+  const doctorStatus = behavior === "thin-client-unhealthy" ? "error" : "ok";
+  const doctorExit = behavior === "thin-client-unhealthy" ? "1" : "0";
+  const doctorBlock = isThinClient
+    ? `if [ "$1 $2 $3" = "doctor --json --fast" ]; then
+  echo '{"mode":"thin-client","status":"${doctorStatus}"}'
+  exit ${doctorExit}
+fi`
+    : "";
   return `#!/bin/sh
 if [ "$1" = "--version" ]; then
-  echo "gbrain 0.33.1.0"
+  echo "gbrain 0.41.28.0"
   exit 0
 fi
+${doctorBlock}
 if [ "$1 $2" = "sources list" ]; then
   if [ ${exitCode} -eq 0 ]; then
     echo '{"sources":[]}'
@@ -205,6 +227,30 @@ describe("lib/gbrain-local-status — five status cases", () => {
     env = makeEnv({ withGbrain: true, gbrainBehavior: "ok", withConfig: true });
     restoreEnv = applyEnv(env);
     expect(localEngineStatus({ noCache: true })).toBe("ok");
+  });
+
+  it("returns 'ok' for a healthy thin-client whose 'sources list' is not routable (#1792)", () => {
+    // Thin-client refuses the local-DB-only sources probe; doctor confirms
+    // mode=thin-client + status=ok. Must NOT be mislabeled broken-config.
+    env = makeEnv({
+      withGbrain: true,
+      gbrainBehavior: "thin-client-ok",
+      withConfig: true,
+    });
+    restoreEnv = applyEnv(env);
+    expect(localEngineStatus({ noCache: true })).toBe("ok");
+  });
+
+  it("stays defensive (broken-config) when a not-routable brain is unhealthy per doctor (#1792)", () => {
+    // "not routable" alone must not upgrade an unconfirmed brain: doctor reports
+    // status=error, so we fall through to the defensive default.
+    env = makeEnv({
+      withGbrain: true,
+      gbrainBehavior: "thin-client-unhealthy",
+      withConfig: true,
+    });
+    restoreEnv = applyEnv(env);
+    expect(localEngineStatus({ noCache: true })).toBe("broken-config");
   });
 });
 

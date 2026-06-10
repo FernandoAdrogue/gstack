@@ -8,10 +8,15 @@
 import { describe, test, expect, beforeAll, afterAll } from 'bun:test';
 import { startTestServer } from './test-server';
 import { BrowserManager } from '../src/browser-manager';
-import { handleReadCommand } from '../src/read-commands';
-import { handleWriteCommand } from '../src/write-commands';
+import { handleReadCommand as _handleReadCommand } from '../src/read-commands';
+import { handleWriteCommand as _handleWriteCommand } from '../src/write-commands';
 import { handleMetaCommand } from '../src/meta-commands';
 import * as fs from 'fs';
+
+const handleReadCommand = (cmd: string, args: string[], b: BrowserManager) =>
+  _handleReadCommand(cmd, args, b.getActiveSession());
+const handleWriteCommand = (cmd: string, args: string[], b: BrowserManager) =>
+  _handleWriteCommand(cmd, args, b.getActiveSession(), b);
 
 let testServer: ReturnType<typeof startTestServer>;
 let bm: BrowserManager;
@@ -201,6 +206,55 @@ describe('Ref invalidation', () => {
   });
 });
 
+
+// ─── Ref Staleness Detection ────────────────────────────────────
+
+describe('Ref staleness detection', () => {
+  test('ref metadata stores role and name', async () => {
+    await handleWriteCommand('goto', [baseUrl + '/snapshot.html'], bm);
+    await handleMetaCommand('snapshot', ['-i'], bm, shutdown);
+    // Refs should exist with metadata
+    expect(bm.getRefCount()).toBeGreaterThan(0);
+  });
+
+  test('stale ref after DOM removal gives descriptive error', async () => {
+    await handleWriteCommand('goto', [baseUrl + '/snapshot.html'], bm);
+    const snap = await handleMetaCommand('snapshot', ['-i'], bm, shutdown);
+    // Find a button ref
+    const buttonLine = snap.split('\n').find(l => l.includes('[button]') && l.includes('"Submit"'));
+    expect(buttonLine).toBeDefined();
+    const refMatch = buttonLine!.match(/@(e\d+)/);
+    expect(refMatch).toBeDefined();
+    const ref = `@${refMatch![1]}`;
+    
+    // Remove the button from DOM (simulates SPA re-render)
+    await handleReadCommand('js', ['document.querySelector("button[type=submit]").remove()'], bm);
+    
+    // Try to click — should get descriptive staleness error
+    try {
+      await handleWriteCommand('click', [ref], bm);
+      expect(true).toBe(false); // Should not reach here
+    } catch (err: any) {
+      expect(err.message).toContain('stale');
+      expect(err.message).toContain('button');
+      expect(err.message).toContain('Submit');
+      expect(err.message).toContain('snapshot');
+    }
+  });
+
+  test('valid ref still resolves normally after staleness check', async () => {
+    await handleWriteCommand('goto', [baseUrl + '/snapshot.html'], bm);
+    const snap = await handleMetaCommand('snapshot', ['-i'], bm, shutdown);
+    const linkLine = snap.split('\n').find(l => l.includes('[link]'));
+    expect(linkLine).toBeDefined();
+    const refMatch = linkLine!.match(/@(e\d+)/);
+    const ref = `@${refMatch![1]}`;
+    // Should work normally — element still exists
+    const result = await handleWriteCommand('hover', [ref], bm);
+    expect(result).toContain('Hovered');
+  });
+});
+
 // ─── Snapshot Diffing ──────────────────────────────────────────
 
 describe('Snapshot diff', () => {
@@ -336,6 +390,75 @@ describe('Cursor-interactive', () => {
     expect(result).toContain('[link]');
     // And cursor-interactive section
     expect(result).toContain('cursor-interactive');
+  });
+
+  test('snapshot -i alone also includes cursor-interactive elements', async () => {
+    await handleWriteCommand('goto', [baseUrl + '/cursor-interactive.html'], bm);
+    const result = await handleMetaCommand('snapshot', ['-i'], bm, shutdown);
+    // -i now auto-enables -C
+    expect(result).toContain('[button]');
+    expect(result).toContain('[link]');
+    expect(result).toContain('cursor-interactive');
+    expect(result).toContain('@c');
+  });
+});
+
+// ─── Dropdown/Popover Detection ─────────────────────────────────
+
+describe('Dropdown/popover detection', () => {
+  test('snapshot -i auto-enables cursor scan and finds dropdown items', async () => {
+    await handleWriteCommand('goto', [baseUrl + '/dropdown.html'], bm);
+    const result = await handleMetaCommand('snapshot', ['-i'], bm, shutdown);
+    // Should find standard interactive elements
+    expect(result).toContain('[button]');
+    expect(result).toContain('[link]');
+    expect(result).toContain('[textbox]');
+    // Should also find cursor-interactive dropdown items
+    expect(result).toContain('cursor-interactive');
+    expect(result).toContain('@c');
+    expect(result).toContain('Alice Johnson');
+    expect(result).toContain('Bob Smith');
+  });
+
+  test('dropdown items in floating container are tagged as popover-child', async () => {
+    await handleWriteCommand('goto', [baseUrl + '/dropdown.html'], bm);
+    const result = await handleMetaCommand('snapshot', ['-i'], bm, shutdown);
+    expect(result).toContain('popover-child');
+  });
+
+  test('dropdown items with role="option" in portal are captured', async () => {
+    await handleWriteCommand('goto', [baseUrl + '/dropdown.html'], bm);
+    const result = await handleMetaCommand('snapshot', ['-i'], bm, shutdown);
+    // Dave Wilson has role="option" — should be captured even though it has a role
+    expect(result).toContain('Dave Wilson');
+  });
+
+  test('static text in dropdown without interactivity is NOT captured', async () => {
+    await handleWriteCommand('goto', [baseUrl + '/dropdown.html'], bm);
+    const result = await handleMetaCommand('snapshot', ['-i'], bm, shutdown);
+    // "No results? Try a different search." has no cursor:pointer, no onclick, no tabindex
+    expect(result).not.toContain('No results');
+  });
+
+  test('@c ref from dropdown is clickable', async () => {
+    await handleWriteCommand('goto', [baseUrl + '/dropdown.html'], bm);
+    const snap = await handleMetaCommand('snapshot', ['-i'], bm, shutdown);
+    // Find a @c ref for Alice
+    const aliceLine = snap.split('\n').find(l => l.includes('@c') && l.includes('Alice'));
+    expect(aliceLine).toBeTruthy();
+    const refMatch = aliceLine!.match(/@(c\d+)/);
+    expect(refMatch).toBeTruthy();
+    const result = await handleWriteCommand('click', [`@${refMatch![1]}`], bm);
+    expect(result).toContain('Clicked');
+  });
+
+  test('snapshot -C still works standalone without -i', async () => {
+    await handleWriteCommand('goto', [baseUrl + '/dropdown.html'], bm);
+    const result = await handleMetaCommand('snapshot', ['-C'], bm, shutdown);
+    expect(result).toContain('cursor-interactive');
+    expect(result).toContain('Alice Johnson');
+    // Without -i, should include non-interactive ARIA elements too
+    expect(result).toContain('[heading]');
   });
 });
 

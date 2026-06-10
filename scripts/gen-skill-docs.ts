@@ -356,249 +356,44 @@ export function buildWhenToInvokeSection(parts: CatalogParts): string {
   return lines.join('\n');
 }
 
-/**
- * Render a string as a YAML inline scalar value (the text after `key: `),
- * quoting only when a plain scalar would be invalid or ambiguous.
- *
- * The bug this guards (#1778): a description like "Ship workflow: detect..."
- * emitted as a plain scalar has an interior ": " that a strict YAML parser
- * (Codex/OpenAI skill loading) reads as a nested mapping and rejects with
- * "mapping values are not allowed in this context". When quoting is needed we
- * fall back to JSON.stringify, which produces a double-quoted scalar that YAML
- * accepts verbatim (YAML is a superset of JSON for flow scalars). Strings that
- * are already valid plain scalars pass through unchanged to keep regen diffs small.
- */
-export function toYamlInlineScalar(s: string): string {
-  const needsQuote =
-    s.length === 0 ||
-    s !== s.trim() ||                       // leading/trailing whitespace
-    /:(\s|$)/.test(s) ||                    // "foo: bar" / trailing colon → mapping ambiguity
-    /\s#/.test(s) ||                        // " #" → inline comment
-    /^[\s>|&*!%@`"'#,\[\]{}?-]/.test(s);    // leading YAML indicator char
-  return needsQuote ? JSON.stringify(s) : s;
+function generateUpdateCheck(): string {
+  return `## Update Check (run first)
+
+\`\`\`bash
+_UPD=$(~/.claude/skills/gstack/bin/gstack-update-check 2>/dev/null || .claude/skills/gstack/bin/gstack-update-check 2>/dev/null || true)
+[ -n "$_UPD" ] && echo "$_UPD" || true
+\`\`\`
+
+If output shows \`UPGRADE_AVAILABLE <old> <new>\`: read \`~/.claude/skills/gstack/gstack-upgrade/SKILL.md\` and follow the "Inline upgrade flow" (AskUserQuestion → upgrade if yes, \`touch ~/.gstack/last-update-check\` if no). If \`JUST_UPGRADED <from> <to>\`: tell user "Running gstack v{to} (just updated!)" and continue.`;
 }
 
-/**
- * Apply catalog trim to a SKILL.md body:
- *  - shorten frontmatter `description:` to lead + (gstack)
- *  - insert "## When to invoke" body section AFTER the generated header
- *    (so it lands near the top of body content, where routing guidance
- *    belongs)
- *
- * Returns the rewritten content plus the parts (used for proactive-suggestions
- * JSON aggregation at the end of the run).
- */
-export function applyCatalogTrim(content: string, skillName: string): { content: string; parts: CatalogParts } | null {
-  // Locate description block in frontmatter
-  if (!content.startsWith('---\n')) return null;
-  const fmEnd = content.indexOf('\n---', 4);
-  if (fmEnd === -1) return null;
-  const frontmatter = content.slice(4, fmEnd);
+function generateBrowseSetup(): string {
+  return `## SETUP (run this check BEFORE any browse command)
 
-  // Match `description: |` block + indented body lines
-  const descMatch = frontmatter.match(/^description:\s*\|?\s*\n((?:\s{2,}.*(?:\n|$))+)/m)
-                    || frontmatter.match(/^description:\s+(.+)$/m);
-  if (!descMatch) return null;
+\`\`\`bash
+_ROOT=$(git rev-parse --show-toplevel 2>/dev/null)
+B=""
+[ -n "$_ROOT" ] && [ -x "$_ROOT/.claude/skills/gstack/browse/dist/browse" ] && B="$_ROOT/.claude/skills/gstack/browse/dist/browse"
+[ -z "$B" ] && B=~/.claude/skills/gstack/browse/dist/browse
+if [ -x "$B" ]; then
+  echo "READY: $B"
+else
+  echo "NEEDS_SETUP"
+fi
+\`\`\`
 
-  // Extract full description text
-  let descText: string;
-  if (descMatch[0].startsWith('description: |') || /^description:\s*\|/.test(descMatch[0])) {
-    descText = descMatch[1].split('\n').map(l => l.replace(/^\s{2}/, '')).join('\n').trim();
-  } else {
-    descText = descMatch[1].trim();
-  }
-
-  // Skip skills with very short descriptions (already trimmed or no routing prose).
-  // Below ~120 chars, splitting adds no value.
-  if (descText.length < 120) return null;
-
-  const parts = splitCatalogDescription(descText);
-  // If lead + (gstack) is already most of the text, no trim needed.
-  const trimmedLen = buildTrimmedDescription(parts).length;
-  if (trimmedLen >= descText.length - 20) return null;
-
-  // Replace description in frontmatter — keep trailing newline so the next
-  // YAML field doesn't collide on the same line as the description value.
-  // Quote the value when it would be an invalid YAML plain scalar (the common
-  // case: an interior ": " like "Ship workflow: detect..." which a strict YAML
-  // parser reads as a nested mapping and rejects — #1778). toYamlInlineScalar
-  // only quotes when needed, so descriptions without special chars stay plain.
-  const newDesc = buildTrimmedDescription(parts);
-  // Function replacer (not a string) so a `$` in the description — e.g. a future
-  // skill referencing `$B`/`$D` — can't be interpreted as a `$&`/`$1` replacement
-  // pattern and silently corrupt the frontmatter.
-  const newDescLine = `description: ${toYamlInlineScalar(newDesc)}\n`;
-  const newFrontmatter = frontmatter.replace(descMatch[0], () => newDescLine);
-  let newContent = '---\n' + newFrontmatter + content.slice(fmEnd);
-
-  // Insert body section after frontmatter (after the closing ---\n and any
-  // existing GENERATED header). We insert before the first non-comment line.
-  const bodyStart = newContent.indexOf('\n---\n') + 5;
-  const whenToInvoke = '\n' + buildWhenToInvokeSection(parts).trim() + '\n';
-  // Skip past the generated header if present (it lives after frontmatter close)
-  const headerMatch = newContent.slice(bodyStart).match(/^(<!--[^>]*-->\s*\n)+/);
-  const insertAt = bodyStart + (headerMatch ? headerMatch[0].length : 0);
-  newContent = newContent.slice(0, insertAt) + whenToInvoke + '\n' + newContent.slice(insertAt);
-
-  return { content: newContent, parts };
+If \`NEEDS_SETUP\`:
+1. Tell the user: "gstack browse needs a one-time build (~10 seconds). OK to proceed?" Then STOP and wait.
+2. Run: \`cd <SKILL_DIR> && ./setup\`
+3. If \`bun\` is not installed: \`curl -fsSL https://bun.sh/install | bash\``;
 }
 
-const OPENAI_SHORT_DESCRIPTION_LIMIT = 120;
-
-function condenseOpenAIShortDescription(description: string): string {
-  const firstParagraph = description.split(/\n\s*\n/)[0] || description;
-  const collapsed = firstParagraph.replace(/\s+/g, ' ').trim();
-  if (collapsed.length <= OPENAI_SHORT_DESCRIPTION_LIMIT) return collapsed;
-
-  const truncated = collapsed.slice(0, OPENAI_SHORT_DESCRIPTION_LIMIT - 3);
-  const lastSpace = truncated.lastIndexOf(' ');
-  const safe = lastSpace > 40 ? truncated.slice(0, lastSpace) : truncated;
-  return `${safe}...`;
-}
-
-function generateOpenAIYaml(displayName: string, shortDescription: string): string {
-  return `interface:
-  display_name: ${JSON.stringify(displayName)}
-  short_description: ${JSON.stringify(shortDescription)}
-  default_prompt: ${JSON.stringify(`Use ${displayName} for this task.`)}
-policy:
-  allow_implicit_invocation: true
-`;
-}
-
-/**
- * Transform frontmatter for external hosts.
- * Claude: strips `sensitive:` field (only Factory uses it).
- * Codex: keeps name + description only, enforces 1024-char limit.
- * Factory: keeps name + description + user-invocable, conditionally adds disable-model-invocation.
- */
-function transformFrontmatter(content: string, host: Host): string {
-  const hostConfig = getHostConfig(host);
-  const fm = hostConfig.frontmatter;
-
-  if (fm.mode === 'denylist') {
-    // Denylist mode: strip listed fields, keep everything else
-    for (const field of fm.stripFields || []) {
-      if (field === 'voice-triggers') {
-        content = content.replace(/^voice-triggers:\n(?:\s+-\s+"[^"]*"\n?)*/m, '');
-      } else {
-        content = content.replace(new RegExp(`^${field}:\\s*.*\\n`, 'm'), '');
-      }
-    }
-    return content;
-  }
-
-  // Allowlist mode: reconstruct frontmatter with only allowed fields
-  const fmStart = content.indexOf('---\n');
-  if (fmStart !== 0) return content;
-  const fmEnd = content.indexOf('\n---', fmStart + 4);
-  if (fmEnd === -1) return content;
-  const frontmatter = content.slice(fmStart + 4, fmEnd);
-  const body = content.slice(fmEnd + 4);
-  const { name, description } = extractNameAndDescription(content);
-
-  // Description limit enforcement
-  if (fm.descriptionLimit) {
-    const behavior = fm.descriptionLimitBehavior || 'error';
-    if (description.length > fm.descriptionLimit) {
-      if (behavior === 'error') {
-        throw new Error(
-          `${hostConfig.displayName} description for "${name}" is ${description.length} chars (max ${fm.descriptionLimit}). ` +
-          `Compress the description in the .tmpl file.`
-        );
-      } else if (behavior === 'warn') {
-        console.warn(`WARNING: ${hostConfig.displayName} description for "${name}" exceeds ${fm.descriptionLimit} chars`);
-      }
-      // 'truncate' — silently proceed
-    }
-  }
-
-  // Build frontmatter with allowed fields
-  const indentedDesc = description.split('\n').map(l => `  ${l}`).join('\n');
-  let newFm = `---\nname: ${name}\ndescription: |\n${indentedDesc}\n`;
-
-  // Add extra fields (host-wide)
-  if (fm.extraFields) {
-    for (const [key, value] of Object.entries(fm.extraFields)) {
-      if (key !== 'name' && key !== 'description') {
-        newFm += `${key}: ${value}\n`;
-      }
-    }
-  }
-
-  // Add conditional fields
-  if (fm.conditionalFields) {
-    for (const rule of fm.conditionalFields) {
-      const match = Object.entries(rule.if).every(([k, v]) =>
-        new RegExp(`^${k}:\\s*${v}`, 'm').test(frontmatter)
-      );
-      if (match) {
-        for (const [key, value] of Object.entries(rule.add)) {
-          newFm += `${key}: ${value}\n`;
-        }
-      }
-    }
-  }
-
-  // Preserve additional keepFields beyond name and description
-  if (fm.keepFields) {
-    for (const field of fm.keepFields) {
-      if (field === 'name' || field === 'description') continue;
-      // Match YAML field with possible multi-line/array value (indented lines after colon)
-      const fieldMatch = frontmatter.match(new RegExp(`^${field}:(.*(?:\\n(?:[ \\t]+.+))*)`, 'm'));
-      if (fieldMatch) {
-        newFm += `${field}:${fieldMatch[1]}\n`;
-      }
-    }
-  }
-
-  // Rename fields (copy values from template frontmatter with new keys)
-  if (fm.renameFields) {
-    for (const [oldName, newName] of Object.entries(fm.renameFields)) {
-      const fieldMatch = frontmatter.match(new RegExp(`^${oldName}:(.+(?:\\n(?:\\s+.+)*)?)`, 'm'));
-      if (fieldMatch) {
-        newFm += `${newName}:${fieldMatch[1]}\n`;
-      }
-    }
-  }
-
-  newFm += '---';
-  return newFm + body;
-}
-
-/**
- * Extract hook descriptions from frontmatter for inline safety prose.
- * Returns a description of what the hooks do, or null if no hooks.
- */
-function extractHookSafetyProse(tmplContent: string): string | null {
-  if (!tmplContent.match(/^hooks:/m)) return null;
-
-  // Parse the hook matchers to build a human-readable safety description
-  const matchers: string[] = [];
-  const matcherRegex = /matcher:\s*"(\w+)"/g;
-  let m;
-  while ((m = matcherRegex.exec(tmplContent)) !== null) {
-    if (!matchers.includes(m[1])) matchers.push(m[1]);
-  }
-
-  if (matchers.length === 0) return null;
-
-  // Build safety prose based on what tools are hooked
-  const toolDescriptions: Record<string, string> = {
-    Bash: 'check bash commands for destructive operations (rm -rf, DROP TABLE, force-push, git reset --hard, etc.) before execution',
-    Edit: 'verify file edits are within the allowed scope boundary before applying',
-    Write: 'verify file writes are within the allowed scope boundary before applying',
-  };
-
-  const safetyChecks = matchers
-    .map(t => toolDescriptions[t] || `check ${t} operations for safety`)
-    .join(', and ');
-
-  return `> **Safety Advisory:** This skill includes safety checks that ${safetyChecks}. When using this skill, always pause and verify before executing potentially destructive operations. If uncertain about a command's safety, ask the user for confirmation before proceeding.`;
-}
-
-// ─── External Host Config (now derived from hosts/*.ts) ──────
-// EXTERNAL_HOST_CONFIG replaced by getHostConfig() from hosts/index.ts
+const RESOLVERS: Record<string, () => string> = {
+  COMMAND_REFERENCE: generateCommandReference,
+  SNAPSHOT_FLAGS: generateSnapshotFlags,
+  UPDATE_CHECK: generateUpdateCheck,
+  BROWSE_SETUP: generateBrowseSetup,
+};
 
 // ─── Template Processing ────────────────────────────────────
 
@@ -880,7 +675,17 @@ function processSectionTemplate(
 // ─── Main ───────────────────────────────────────────────────
 
 function findTemplates(): string[] {
-  return discoverTemplates(ROOT).map(t => path.join(ROOT, t.tmpl));
+  const templates: string[] = [];
+  const candidates = [
+    path.join(ROOT, 'SKILL.md.tmpl'),
+    path.join(ROOT, 'browse', 'SKILL.md.tmpl'),
+    path.join(ROOT, 'qa', 'SKILL.md.tmpl'),
+    path.join(ROOT, 'setup-browser-cookies', 'SKILL.md.tmpl'),
+  ];
+  for (const p of candidates) {
+    if (fs.existsSync(p)) templates.push(p);
+  }
+  return templates;
 }
 
 const ALL_HOSTS: Host[] = ALL_HOST_NAMES as Host[];

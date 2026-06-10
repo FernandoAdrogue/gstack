@@ -143,8 +143,7 @@ describeIfSelected('LLM-as-judge quality evals', [
     expect(scores.actionability).toBeGreaterThanOrEqual(4);
   }, 30_000);
 
-  testIfSelected('setup block', async () => {
-    const t0 = Date.now();
+  test('setup block scores >= 4 on actionability and clarity', async () => {
     const content = fs.readFileSync(path.join(ROOT, 'SKILL.md'), 'utf-8');
     const setupStart = content.indexOf('## SETUP');
     const setupEnd = content.indexOf('## IMPORTANT');
@@ -153,25 +152,13 @@ describeIfSelected('LLM-as-judge quality evals', [
     const scores = await judge('setup/binary discovery instructions', section);
     console.log('Setup block scores:', JSON.stringify(scores, null, 2));
 
-    evalCollector?.addTest({
-      name: 'setup block',
-      suite: 'LLM-as-judge quality evals',
-      tier: 'llm-judge',
-      passed: scores.actionability >= 3 && scores.clarity >= 3,
-      duration_ms: Date.now() - t0,
-      cost_usd: 0.02,
-      judge_scores: { clarity: scores.clarity, completeness: scores.completeness, actionability: scores.actionability },
-      judge_reasoning: scores.reasoning,
-    });
-
-    // Setup block is intentionally minimal (binary discovery only).
-    // SKILL_DIR is inferred from context, so judge sometimes scores 3.
-    expect(scores.actionability).toBeGreaterThanOrEqual(3);
-    expect(scores.clarity).toBeGreaterThanOrEqual(3);
+    expect(scores.actionability).toBeGreaterThanOrEqual(4);
+    expect(scores.clarity).toBeGreaterThanOrEqual(4);
   }, 30_000);
 
-  testIfSelected('regression vs baseline', async () => {
-    const t0 = Date.now();
+  test('regression check: compare branch vs baseline quality', async () => {
+    // This test compares the generated output against the hand-maintained
+    // baseline from main. The generated version should score equal or higher.
     const generated = fs.readFileSync(path.join(ROOT, 'SKILL.md'), 'utf-8');
     const genStart = generated.indexOf('## Command Reference');
     const genEnd = generated.indexOf('## Tips');
